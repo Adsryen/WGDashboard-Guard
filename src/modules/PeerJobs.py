@@ -9,7 +9,7 @@ from datetime import datetime
 from flask import current_app
 
 class PeerJobs:
-    def __init__(self, DashboardConfig, WireguardConfigurations):
+    def __init__(self, DashboardConfig, WireguardConfigurations, AllPeerShareLinks):
         self.Jobs: list[PeerJob] = []
         self.engine = db.create_engine(ConnectionString('wgdashboard_job'))
         self.metadata = db.MetaData()
@@ -28,6 +28,7 @@ class PeerJobs:
         self.__getJobs()
         self.JobLogger: PeerJobLogger = PeerJobLogger(self, DashboardConfig)
         self.WireguardConfigurations = WireguardConfigurations
+        self.AllPeerShareLinks = AllPeerShareLinks
 
     def __getJobs(self):
         self.Jobs.clear()
@@ -162,7 +163,7 @@ class PeerJobs:
                         if job.Action == "restrict":
                             s, msg = c.restrictPeers([fp.id])
                         elif job.Action == "delete":
-                            s, msg = c.deletePeers([fp.id])
+                            s, msg = c.deletePeers([fp.id], self, self.AllPeerShareLinks)
                         elif job.Action == "reset_total_data_usage":
                             s = fp.resetDataUsage("total")
                             c.restrictPeers([fp.id])
@@ -179,12 +180,10 @@ class PeerJobs:
                                           f"Peer {fp.id} from {c.Name} failed {job.Action}ed."
                                           )
                 else:
-                    current_app.logger.warning(f"Somehow can't find this peer {job.Peer} from {c.Name} failed {job.Action}ed.")
                     self.JobLogger.log(job.JobID, False,
                                   f"Somehow can't find this peer {job.Peer} from {c.Name} failed {job.Action}ed."
                                   )
             else:
-                current_app.logger.warning(f"Somehow can't find this peer {job.Peer} from {job.Configuration} failed {job.Action}ed.")
                 self.JobLogger.log(job.JobID, False,
                               f"Somehow can't find this peer {job.Peer} from {job.Configuration} failed {job.Action}ed."
                               )

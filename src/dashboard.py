@@ -194,7 +194,7 @@ with app.app_context():
     DashboardConfig = DashboardConfig()
     EmailSender = EmailSender(DashboardConfig)
     AllPeerShareLinks: PeerShareLinks = PeerShareLinks(DashboardConfig, WireguardConfigurations)
-    AllPeerJobs: PeerJobs = PeerJobs(DashboardConfig, WireguardConfigurations)
+    AllPeerJobs: PeerJobs = PeerJobs(DashboardConfig, WireguardConfigurations, AllPeerShareLinks)
     DashboardLogger: DashboardLogger = DashboardLogger()
     DashboardPlugins: DashboardPlugins = DashboardPlugins(app, WireguardConfigurations)
     DashboardWebHooks: DashboardWebHooks = DashboardWebHooks(DashboardConfig)

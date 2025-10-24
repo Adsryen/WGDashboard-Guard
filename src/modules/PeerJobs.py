@@ -1,6 +1,8 @@
 """
 Peer Jobs
 """
+import sqlalchemy
+
 from .ConnectionString import ConnectionString
 from .PeerJob import PeerJob
 from .PeerJobLogger import PeerJobLogger
@@ -117,7 +119,7 @@ class PeerJobs:
                         }
                     ).where(self.peerJobTable.columns.JobID == Job.JobID)
                 )
-                self.JobLogger.log(Job.JobID, Message=f"Job is removed due to being deleted or finshed.")
+                self.JobLogger.log(Job.JobID, Message=f"Job is removed due to being deleted or finished.")
             self.__getJobs()
             self.WireguardConfigurations.get(Job.Configuration).searchPeer(Job.Peer)[1].getJobs()
             return True, None
@@ -142,7 +144,7 @@ class PeerJobs:
 
 
     def runJob(self):
-        current_app.logger.info("Running scheduled jobs")
+        self.cleanJob()
         needToDelete = []
         self.__getJobs()
         for job in self.Jobs:
@@ -172,10 +174,8 @@ class PeerJobs:
                             self.JobLogger.log(job.JobID, s,
                                           f"Peer {fp.id} from {c.Name} is successfully {job.Action}ed."
                                           )
-                            current_app.logger.info(f"Peer {fp.id} from {c.Name} is successfully {job.Action}ed.")
                             needToDelete.append(job)
                         else:
-                            current_app.logger.info(f"Peer {fp.id} from {c.Name} is failed {job.Action}ed.")
                             self.JobLogger.log(job.JobID, s,
                                           f"Peer {fp.id} from {c.Name} failed {job.Action}ed."
                                           )
@@ -189,6 +189,19 @@ class PeerJobs:
                               )
         for j in needToDelete:
             self.deleteJob(j)
+            
+    def cleanJob(self):
+        failingJobs = self.JobLogger.getFailingJobs()
+        with self.engine.begin() as conn:
+            for job in failingJobs:
+                conn.execute(
+                    self.peerJobTable.update().values(
+                        {
+                            "ExpireDate": datetime.now()
+                        }
+                    ).where(self.peerJobTable.columns.JobID == job.get('JobID'))
+                )    
+                self.JobLogger.log(job.get('JobID'), Message=f"Job is removed due to being stale.")
 
     def __runJob_Compare(self, x: float | datetime, y: float | datetime, operator: str):
         if operator == "eq":

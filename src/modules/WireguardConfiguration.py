@@ -395,9 +395,7 @@ class WireguardConfiguration:
         return changed
 
     def getPeers(self):
-        tmpList = []
-        current_app.logger.info(f"Refreshing {self.Name} peer list")
-        
+        tmpList = []        
         if self.configurationFileChanged():
             with open(self.configPath, 'r') as configFile:
                 p = []

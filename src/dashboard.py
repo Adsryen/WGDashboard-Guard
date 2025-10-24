@@ -223,11 +223,11 @@ def auth_req():
         return ResponseObject(True)        
 
     DashboardConfig.APIAccessed = False
-    if "api" in request.path:
-        if str(request.method) == "GET":
-            DashboardLogger.log(str(request.url), str(request.remote_addr), Message=str(request.args))
-        elif str(request.method) == "POST":
-            DashboardLogger.log(str(request.url), str(request.remote_addr), Message=f"Request Args: {str(request.args)} Body:{str(request.get_json())}")
+    # if "api" in request.path:
+    #     if str(request.method) == "GET":
+    #         DashboardLogger.log(str(request.url), str(request.remote_addr), Message=str(request.args))
+    #     elif str(request.method) == "POST":
+    #         DashboardLogger.log(str(request.url), str(request.remote_addr), Message=f"Request Args: {str(request.args)} Body:{str(request.get_json())}")
         
     
     authenticationRequired = DashboardConfig.GetConfig("Server", "auth_req")[1]

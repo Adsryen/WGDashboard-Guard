@@ -1195,7 +1195,7 @@ class WireguardConfiguration:
         except Exception as e:
             return False
         
-    def updateConfigurationInfo(self, key: str, value: str | dict[str, str] | dict[str, dict]) -> tuple[bool, Any, str] | tuple[
+    def updateConfigurationInfo(self, key: str, value: str | dict[str, str] | dict[str, dict] | bool) -> tuple[bool, Any, str] | tuple[
         bool, str, None] | tuple[bool, None, None]:
         if key == "Description":
             self.configurationInfo.Description = value
@@ -1214,9 +1214,12 @@ class WireguardConfiguration:
             for name, data in value.items():
                 peerGroups[name] = PeerGroupsClass(**data)
             self.configurationInfo.PeerGroups = peerGroups
+        elif key == "PeerTrafficTracking":
+            self.configurationInfo.PeerTrafficTracking = value
+        elif key == "PeerHistoricalTrafficTracking":
+            self.configurationInfo.PeerHistoricalEndpointTracking = value
         else: 
             return False, "Key does not exist", None
-        
         self.storeConfigurationInfo()
         return True, None, None
     

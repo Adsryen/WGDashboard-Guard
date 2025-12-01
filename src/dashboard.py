@@ -222,14 +222,7 @@ def auth_req():
     if request.method.lower() == 'options':
         return ResponseObject(True)        
 
-    DashboardConfig.APIAccessed = False
-    # if "api" in request.path:
-    #     if str(request.method) == "GET":
-    #         DashboardLogger.log(str(request.url), str(request.remote_addr), Message=str(request.args))
-    #     elif str(request.method) == "POST":
-    #         DashboardLogger.log(str(request.url), str(request.remote_addr), Message=f"Request Args: {str(request.args)} Body:{str(request.get_json())}")
-        
-    
+    DashboardConfig.APIAccessed = False    
     authenticationRequired = DashboardConfig.GetConfig("Server", "auth_req")[1]
     d = request.headers
     if authenticationRequired:
@@ -1090,12 +1083,10 @@ def API_GetPeerTraffics():
         interval = request.args.get('interval', 30)
         startDate = request.args.get('startDate', None)
         endDate = request.args.get('endDate', None)
-        
         if type(interval) is str:
             if not interval.isdigit():
                 return ResponseObject(False, "Interval must be integers in minutes")
             interval = int(interval)
-        
         if startDate is None:
             endDate = None
         else:

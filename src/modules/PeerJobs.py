@@ -205,6 +205,8 @@ class PeerJobs:
                 self.JobLogger.deleteLogs(JobID=job.get('JobID'))
                 self.JobLogger.log(job.get('JobID'), Message=f"Job is removed due to being stale.")
             if init and conn.dialect.name == 'sqlite':
+                print("[WGDashboard] SQLite Vacuuming...")
+                self.JobLogger.vacuum()
                 conn.execute('VACUUM;')
 
     def __runJob_Compare(self, x: float | datetime, y: float | datetime, operator: str):

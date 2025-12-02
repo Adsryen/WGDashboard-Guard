@@ -31,7 +31,7 @@ class PeerJobs:
         self.JobLogger: PeerJobLogger = PeerJobLogger(self, DashboardConfig)
         self.WireguardConfigurations = WireguardConfigurations
         self.AllPeerShareLinks = AllPeerShareLinks
-        self.cleanJob()
+        self.cleanJob(init=True)
 
     def __getJobs(self):
         self.Jobs.clear()

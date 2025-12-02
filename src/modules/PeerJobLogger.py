@@ -68,7 +68,10 @@ class PeerJobLogger:
                 db.select(
                     self.jobLogTable.c.JobID
                 ).where(
-                    self.jobLogTable.c.Status == 'false'
+                    db.or_(
+                        self.jobLogTable.c.Status == 'false',
+                        self.jobLogTable.c.Status == 0
+                    )
                 ).group_by(
                     self.jobLogTable.c.JobID
                 ).having(

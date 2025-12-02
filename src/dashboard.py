@@ -1104,6 +1104,44 @@ def API_GetPeerTraffics():
         return ResponseObject(data=p.getTraffics(interval, startDate, endDate))
     return ResponseObject(False, "Peer does not exist")
 
+@app.get(f'{APP_PREFIX}/api/getPeerTrackingTableCounts')
+def API_GetPeerTrackingTableCounts():
+    configurationName = request.args.get("configurationName")
+    if configurationName not in WireguardConfigurations.keys():
+        return ResponseObject(False, "Configuration does not exist")
+    c = WireguardConfigurations.get(configurationName)
+    return ResponseObject(data={
+        "TrafficTrackingTableSize": c.getTransferTableSize(),
+        "HistoricalTrackingTableSize": c.getHistoricalEndpointTableSize()
+    })
+
+@app.get(f'{APP_PREFIX}/api/downloadPeerTrackingTable')
+def API_DownloadPeerTackingTable():
+    configurationName = request.args.get("configurationName")
+    table = request.args.get('table')
+    if configurationName not in WireguardConfigurations.keys():
+        return ResponseObject(False, "Configuration does not exist")
+    if table not in ['TrafficTrackingTable', 'HistoricalTrackingTable']:
+        return ResponseObject(False, "Table does not exist")
+    c = WireguardConfigurations.get(configurationName)
+    return ResponseObject(
+        data=c.downloadTransferTable() if table == 'TrafficTrackingTable' 
+        else c.downloadHistoricalEndpointTable())
+
+@app.post(f'{APP_PREFIX}/api/deletePeerTrackingTable')
+def API_DeletePeerTrackingTable():
+    data = request.get_json()
+    configurationName = data.get('configurationName')
+    table = data.get('table')
+    if not configurationName or configurationName not in WireguardConfigurations.keys():
+        return ResponseObject(False, "Configuration does not exist")
+    if not table or table not in ['TrafficTrackingTable', 'HistoricalTrackingTable']:
+        return ResponseObject(False, "Table does not exist")
+    c = WireguardConfigurations.get(configurationName)
+    return ResponseObject(
+        status=c.deleteTransferTable() if table == 'TrafficTrackingTable'
+        else c.deleteHistoryEndpointTable())
+
 @app.get(f'{APP_PREFIX}/api/getDashboardTheme')
 def API_getDashboardTheme():
     return ResponseObject(data=DashboardConfig.GetConfig("Server", "dashboard_theme")[1])

@@ -78,3 +78,15 @@ class PeerJobLogger:
                 )
             ).mappings().fetchall()
             return table
+    
+    def deleteLogs(self, LogID = None, JobID = None):
+        with self.engine.begin() as conn:
+            print(f"Deleted logs of JobID {JobID}")
+            conn.execute(
+                self.jobLogTable.delete().where(
+                    db.and_(
+                        (self.jobLogTable.c.LogID == LogID if LogID is not None else True),
+                        (self.jobLogTable.c.JobID == JobID if JobID is not None else True),
+                    )
+                )
+            )

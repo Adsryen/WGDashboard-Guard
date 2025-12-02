@@ -200,7 +200,8 @@ class PeerJobs:
                             "ExpireDate": datetime.now()
                         }
                     ).where(self.peerJobTable.columns.JobID == job.get('JobID'))
-                )    
+                )
+                self.JobLogger.deleteLogs(JobID=job.get('JobID'))
                 self.JobLogger.log(job.get('JobID'), Message=f"Job is removed due to being stale.")
 
     def __runJob_Compare(self, x: float | datetime, y: float | datetime, operator: str):

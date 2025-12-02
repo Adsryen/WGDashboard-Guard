@@ -209,7 +209,7 @@ class PeerJobs:
             if init and conn.dialect.name == 'sqlite':
                 print("[WGDashboard] SQLite Vacuuming...")
                 self.JobLogger.vacuum()
-                conn.execute('VACUUM;')
+                conn.execute(sqlalchemy.text('VACUUM;'))
 
     def __runJob_Compare(self, x: float | datetime, y: float | datetime, operator: str):
         if operator == "eq":

@@ -97,4 +97,4 @@ class PeerJobLogger:
     def vacuum(self):
         with self.engine.begin() as conn:
             if conn.dialect.name == 'sqlite':
-                conn.execute('VACUUM;')
+                conn.execute(db.text('VACUUM;'))

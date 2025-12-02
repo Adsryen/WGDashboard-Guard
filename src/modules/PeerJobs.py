@@ -192,24 +192,22 @@ class PeerJobs:
             self.deleteJob(j)
             
     def cleanJob(self, init = False):
-        
         failingJobs = self.JobLogger.getFailingJobs()
-        # with self.engine.begin() as conn:
-        #     print(conn.dialect.name)
-        #     for job in failingJobs:
-        #         conn.execute(
-        #             self.peerJobTable.update().values(
-        #                 {
-        #                     "ExpireDate": datetime.now()
-        #                 }
-        #             ).where(self.peerJobTable.columns.JobID == job.get('JobID'))
-        #         )
-        #         self.JobLogger.deleteLogs(JobID=job.get('JobID'))
-        #         self.JobLogger.log(job.get('JobID'), Message=f"Job is removed due to being stale.")
+        with self.engine.begin() as conn:
+            for job in failingJobs:
+                conn.execute(
+                    self.peerJobTable.update().values(
+                        {
+                            "ExpireDate": datetime.now()
+                        }
+                    ).where(self.peerJobTable.columns.JobID == job.get('JobID'))
+                )
+                self.JobLogger.deleteLogs(JobID=job.get('JobID'))
+                self.JobLogger.log(job.get('JobID'), Message=f"Job is removed due to being stale.")
         
         with self.engine.connect() as conn:
             if init and conn.dialect.name == 'sqlite':
-                print("[WGDashboard] SQLite Vacuuming...")
+                print("[WGDashboard] SQLite Vacuuming PeerJobs Database")
                 self.JobLogger.vacuum()
                 conn.execute(sqlalchemy.text('VACUUM;'))
 

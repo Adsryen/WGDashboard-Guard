@@ -68,10 +68,10 @@ class PeerJobLogger:
                 db.select(
                     self.jobLogTable.c.JobID
                 ).where(
-                    db.or_(
+                    (db.or_(
                         self.jobLogTable.c.Status == 'false',
                         self.jobLogTable.c.Status == 0
-                    )
+                    ) if conn.dialect.name == 'sqlite' else self.jobLogTable.c.Status == 'false')
                 ).group_by(
                     self.jobLogTable.c.JobID
                 ).having(
@@ -97,4 +97,5 @@ class PeerJobLogger:
     def vacuum(self):
         with self.engine.begin() as conn:
             if conn.dialect.name == 'sqlite':
+                print("[WGDashboard] SQLite Vacuuming PeerJogLogs Database")
                 conn.execute(db.text('VACUUM;'))

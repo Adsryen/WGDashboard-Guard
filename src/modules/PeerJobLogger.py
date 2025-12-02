@@ -84,7 +84,7 @@ class PeerJobLogger:
     
     def deleteLogs(self, LogID = None, JobID = None):
         with self.engine.begin() as conn:
-            print(f"Deleted logs of JobID {JobID}")
+            print(f"[WGDashboard] Deleted stale logs of JobID: {JobID}")
             conn.execute(
                 self.jobLogTable.delete().where(
                     db.and_(

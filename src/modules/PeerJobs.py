@@ -192,8 +192,10 @@ class PeerJobs:
             self.deleteJob(j)
             
     def cleanJob(self, init = False):
+        
         failingJobs = self.JobLogger.getFailingJobs()
         with self.engine.begin() as conn:
+            print(conn.dialect.name)
             for job in failingJobs:
                 conn.execute(
                     self.peerJobTable.update().values(

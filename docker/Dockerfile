@@ -22,7 +22,8 @@ ENV CGO_ENABLED=1
 # Change directory
 WORKDIR /workspace/awg
 # Compile the binaries
-RUN go mod download && \
+RUN go version && \
+    go mod download && \
     go mod verify && \
     go build -ldflags '-linkmode external -extldflags "-fno-PIC -static"' -v -o /usr/bin
 #
@@ -56,12 +57,16 @@ RUN make && chmod +x wg*
 # Use the python-alpine image for building pip dependencies
 FROM python:3.14-alpine AS pip-builder
 
+ARG TARGETPLATFORM
+
 # Add the build dependencies and create a Python virtual environment.
 RUN apk add --no-cache \
       build-base \
       pkgconfig \
       python3-dev \
+      postgresql-dev \
       libffi-dev \
+      libpq \
       linux-headers \
       rust \
       cargo \
@@ -70,6 +75,11 @@ RUN apk add --no-cache \
 
 # Copy the requirements file into the build layer.
 COPY ./src/requirements.txt /opt/wgdashboard/src
+RUN if [ "$TARGETPLATFORM" = "linux/arm/v7" ]; then \
+      sed -i "s|psycopg\[binary\]==3.2.13|psycopg\[c\]==3.2.13|" /opt/wgdashboard/src/requirements.txt; \
+    fi; \
+    cat /opt/wgdashboard/src/requirements.txt
+
 # Install the pip packages
 RUN . /opt/wgdashboard/src/venv/bin/activate && \
     pip3 install --upgrade pip && \
@@ -133,7 +143,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 # Copy in the runtime script, essential.
 COPY ./docker/entrypoint.sh /entrypoint.sh
 
-#
+# Expose ports on the container
 EXPOSE 10086
 WORKDIR $WGDASH/src
 

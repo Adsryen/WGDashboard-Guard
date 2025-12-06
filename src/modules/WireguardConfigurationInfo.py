@@ -19,3 +19,5 @@ class WireguardConfigurationInfo(BaseModel):
     Description: str = ''
     OverridePeerSettings: OverridePeerSettingsClass = OverridePeerSettingsClass(**{})
     PeerGroups: dict[str, PeerGroupsClass] = {}
+    PeerTrafficTracking: bool = True
+    PeerHistoricalEndpointTracking: bool = True

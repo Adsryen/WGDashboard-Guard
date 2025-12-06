@@ -68,7 +68,10 @@ class PeerJobLogger:
                 db.select(
                     self.jobLogTable.c.JobID
                 ).where(
-                    self.jobLogTable.c.Status == 'false'
+                    (db.or_(
+                        self.jobLogTable.c.Status == 'false',
+                        self.jobLogTable.c.Status == 0
+                    ) if conn.dialect.name == 'sqlite' else self.jobLogTable.c.Status == 'false')
                 ).group_by(
                     self.jobLogTable.c.JobID
                 ).having(
@@ -78,3 +81,21 @@ class PeerJobLogger:
                 )
             ).mappings().fetchall()
             return table
+    
+    def deleteLogs(self, LogID = None, JobID = None):
+        with self.engine.begin() as conn:
+            print(f"[WGDashboard] Deleted stale logs of JobID: {JobID}")
+            conn.execute(
+                self.jobLogTable.delete().where(
+                    db.and_(
+                        (self.jobLogTable.c.LogID == LogID if LogID is not None else True),
+                        (self.jobLogTable.c.JobID == JobID if JobID is not None else True),
+                    )
+                )
+            )
+    
+    def vacuum(self):
+        with self.engine.begin() as conn:
+            if conn.dialect.name == 'sqlite':
+                print("[WGDashboard] SQLite Vacuuming PeerJogLogs Database")
+                conn.execute(db.text('VACUUM;'))

@@ -1195,7 +1195,7 @@ class WireguardConfiguration:
         except Exception as e:
             return False
         
-    def updateConfigurationInfo(self, key: str, value: str | dict[str, str] | dict[str, dict]) -> tuple[bool, Any, str] | tuple[
+    def updateConfigurationInfo(self, key: str, value: str | dict[str, str] | dict[str, dict] | bool) -> tuple[bool, Any, str] | tuple[
         bool, str, None] | tuple[bool, None, None]:
         if key == "Description":
             self.configurationInfo.Description = value
@@ -1214,9 +1214,12 @@ class WireguardConfiguration:
             for name, data in value.items():
                 peerGroups[name] = PeerGroupsClass(**data)
             self.configurationInfo.PeerGroups = peerGroups
+        elif key == "PeerTrafficTracking":
+            self.configurationInfo.PeerTrafficTracking = value
+        elif key == "PeerHistoricalEndpointTracking":
+            self.configurationInfo.PeerHistoricalEndpointTracking = value
         else: 
             return False, "Key does not exist", None
-        
         self.storeConfigurationInfo()
         return True, None, None
     
@@ -1234,3 +1237,50 @@ class WireguardConfiguration:
                 msg = "Listen Port must be >= 1 and <= 65535"        
         return status, msg
         
+    def getTransferTableSize(self):
+        with self.engine.connect() as db:
+            row_count = db.execute(
+                sqlalchemy.select(sqlalchemy.func.count()).select_from(self.peersTransferTable)
+            ).scalar()
+            return int(row_count)
+
+    def getHistoricalEndpointTableSize(self):
+        with self.engine.connect() as db:
+            row_count = db.execute(
+                sqlalchemy.select(sqlalchemy.func.count()).select_from(self.peersHistoryEndpointTable)
+            ).scalar()
+            return int(row_count)
+        
+    def downloadTransferTable(self):
+        with self.engine.connect() as db:
+            data = db.execute(
+                self.peersTransferTable.select()
+            ).mappings().fetchall()
+            return data
+
+    def downloadHistoricalEndpointTable(self):
+        with self.engine.connect() as db:
+            data = db.execute(
+                self.peersHistoryEndpointTable.select()
+            ).mappings().fetchall()
+            return data
+    
+    def deleteTransferTable(self):
+        try:
+            with self.engine.begin() as db:
+                db.execute(
+                    self.peersTransferTable.delete()
+            )
+        except Exception as e:
+            return False
+        return True
+
+    def deleteHistoryEndpointTable(self):
+        try:
+            with self.engine.begin() as db:
+                db.execute(
+                    self.peersHistoryEndpointTable.delete()
+                )
+        except Exception as e:
+            return False
+        return True

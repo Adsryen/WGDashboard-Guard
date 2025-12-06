@@ -222,14 +222,7 @@ def auth_req():
     if request.method.lower() == 'options':
         return ResponseObject(True)        
 
-    DashboardConfig.APIAccessed = False
-    # if "api" in request.path:
-    #     if str(request.method) == "GET":
-    #         DashboardLogger.log(str(request.url), str(request.remote_addr), Message=str(request.args))
-    #     elif str(request.method) == "POST":
-    #         DashboardLogger.log(str(request.url), str(request.remote_addr), Message=f"Request Args: {str(request.args)} Body:{str(request.get_json())}")
-        
-    
+    DashboardConfig.APIAccessed = False    
     authenticationRequired = DashboardConfig.GetConfig("Server", "auth_req")[1]
     d = request.headers
     if authenticationRequired:
@@ -1090,12 +1083,10 @@ def API_GetPeerTraffics():
         interval = request.args.get('interval', 30)
         startDate = request.args.get('startDate', None)
         endDate = request.args.get('endDate', None)
-        
         if type(interval) is str:
             if not interval.isdigit():
                 return ResponseObject(False, "Interval must be integers in minutes")
             interval = int(interval)
-        
         if startDate is None:
             endDate = None
         else:
@@ -1112,6 +1103,44 @@ def API_GetPeerTraffics():
     if fp:
         return ResponseObject(data=p.getTraffics(interval, startDate, endDate))
     return ResponseObject(False, "Peer does not exist")
+
+@app.get(f'{APP_PREFIX}/api/getPeerTrackingTableCounts')
+def API_GetPeerTrackingTableCounts():
+    configurationName = request.args.get("configurationName")
+    if configurationName not in WireguardConfigurations.keys():
+        return ResponseObject(False, "Configuration does not exist")
+    c = WireguardConfigurations.get(configurationName)
+    return ResponseObject(data={
+        "TrafficTrackingTableSize": c.getTransferTableSize(),
+        "HistoricalTrackingTableSize": c.getHistoricalEndpointTableSize()
+    })
+
+@app.get(f'{APP_PREFIX}/api/downloadPeerTrackingTable')
+def API_DownloadPeerTackingTable():
+    configurationName = request.args.get("configurationName")
+    table = request.args.get('table')
+    if configurationName not in WireguardConfigurations.keys():
+        return ResponseObject(False, "Configuration does not exist")
+    if table not in ['TrafficTrackingTable', 'HistoricalTrackingTable']:
+        return ResponseObject(False, "Table does not exist")
+    c = WireguardConfigurations.get(configurationName)
+    return ResponseObject(
+        data=c.downloadTransferTable() if table == 'TrafficTrackingTable' 
+        else c.downloadHistoricalEndpointTable())
+
+@app.post(f'{APP_PREFIX}/api/deletePeerTrackingTable')
+def API_DeletePeerTrackingTable():
+    data = request.get_json()
+    configurationName = data.get('configurationName')
+    table = data.get('table')
+    if not configurationName or configurationName not in WireguardConfigurations.keys():
+        return ResponseObject(False, "Configuration does not exist")
+    if not table or table not in ['TrafficTrackingTable', 'HistoricalTrackingTable']:
+        return ResponseObject(False, "Table does not exist")
+    c = WireguardConfigurations.get(configurationName)
+    return ResponseObject(
+        status=c.deleteTransferTable() if table == 'TrafficTrackingTable'
+        else c.deleteHistoryEndpointTable())
 
 @app.get(f'{APP_PREFIX}/api/getDashboardTheme')
 def API_getDashboardTheme():

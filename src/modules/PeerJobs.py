@@ -31,6 +31,7 @@ class PeerJobs:
         self.JobLogger: PeerJobLogger = PeerJobLogger(self, DashboardConfig)
         self.WireguardConfigurations = WireguardConfigurations
         self.AllPeerShareLinks = AllPeerShareLinks
+        self.cleanJob(init=True)
 
     def __getJobs(self):
         self.Jobs.clear()
@@ -190,7 +191,7 @@ class PeerJobs:
         for j in needToDelete:
             self.deleteJob(j)
             
-    def cleanJob(self):
+    def cleanJob(self, init = False):
         failingJobs = self.JobLogger.getFailingJobs()
         with self.engine.begin() as conn:
             for job in failingJobs:
@@ -200,8 +201,15 @@ class PeerJobs:
                             "ExpireDate": datetime.now()
                         }
                     ).where(self.peerJobTable.columns.JobID == job.get('JobID'))
-                )    
+                )
+                self.JobLogger.deleteLogs(JobID=job.get('JobID'))
                 self.JobLogger.log(job.get('JobID'), Message=f"Job is removed due to being stale.")
+        
+        with self.engine.connect() as conn:
+            if init and conn.dialect.name == 'sqlite':
+                print("[WGDashboard] SQLite Vacuuming PeerJobs Database")
+                self.JobLogger.vacuum()
+                conn.execute(sqlalchemy.text('VACUUM;'))
 
     def __runJob_Compare(self, x: float | datetime, y: float | datetime, operator: str):
         if operator == "eq":

@@ -88,7 +88,7 @@ const deleteRecord = async (key) => {
 			{{ configuration.Name }}
 		</div>
 		<div class="card-body">
-			<div class="row">
+			<div class="row gy-2">
 				<div class="col-sm">
 					<small class="text-muted fw-bold">Peer Traffic Tracking</small>
 					<div class="form-check form-switch">

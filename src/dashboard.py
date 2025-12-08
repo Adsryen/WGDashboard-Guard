@@ -93,8 +93,10 @@ def peerInformationBackgroundThread():
                             c.getPeersEndpoint()
                             c.getPeers()
                             if delay == 6:
-                                c.logPeersTraffic()
-                                c.logPeersHistoryEndpoint()
+                                if c.configurationInfo.PeerTrafficTracking:
+                                    c.logPeersTraffic()
+                                if c.configurationInfo.PeerHistoricalEndpointTracking:
+                                    c.logPeersHistoryEndpoint()
                             c.getRestrictedPeersList()
             except Exception as e:
                 app.logger.error(f"[WGDashboard] Background Thread #1 Error", e)

@@ -180,6 +180,7 @@ set_envvars() {
 
 # Start service and monitor logs
 start_and_monitor() {
+  local logdir="${WGDASH}/src/log"
   printf "\n---------------------- STARTING CORE -----------------------\n"
 
   # Due to some instances complaining about this, making sure its there every time.
@@ -189,14 +190,19 @@ start_and_monitor() {
 
   # Actually starting WGDashboard
   echo "Starting WGDashboard directly with Gunicorn..."
-  /opt/wgdashboard/src/venv/bin/python3 ./venv/bin/gunicorn --config ./gunicorn.conf.py
+  /opt/wgdashboard/src/venv/bin/python3 /opt/wgdashboard/src/venv/bin/gunicorn --config /opt/wgdashboard/src/gunicorn.conf.py
+  if [ $? -ne 0 ]; then
+    echo "Loading WGDashboard failed... Look above for details."
+  fi
 
   # Wait a second before continuing, to give the python program some time to get ready.
-  sleep 1
   echo -e "\nEnsuring container continuation."
+  while [[ ! -d $logdir ]]; do
+    echo "Logging directory not yet present..."
+    sleep 1s
+  done
 
   # Find and monitor log file
-  local logdir="${WGDASH}/src/log"
   latestErrLog=$(find "$logdir" -name "error_*.log" -type f -print | sort -r | head -n 1)
 
   # Only tail the logs if they are found

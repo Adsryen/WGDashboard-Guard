@@ -1,4 +1,4 @@
-name: Docker Build and Push
+name: MANUAL Docker workflow for debugging
 
 on:
   workflow_dispatch:

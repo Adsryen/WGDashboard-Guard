@@ -96,7 +96,7 @@ LABEL maintainer="dselen@nerthus.nl"
 
 # Install only the runtime dependencies
 RUN apk add --no-cache \
-    iproute2 iptables \
+    iproute2 iptables openresolv \
     bash curl procps openrc \
     tzdata wireguard-tools
 

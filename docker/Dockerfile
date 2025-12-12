@@ -131,17 +131,6 @@ RUN export out_adapt=$(ip -o -4 route show to default | awk '{print $NF}') \
     && envsubst < /tmp/wg0.conf.template > /configs/wg0.conf.template \
     && chmod 600 /configs/wg0.conf.template \
     && cat /configs/wg0.conf.template
-#  && echo -e "[Interface]\n\
-#Address = ${wg_net}/${wg_subn}\n\
-#PrivateKey =\n\
-#PostUp = iptables -t nat -I POSTROUTING 1 -s ${wg_net}/24 -o ${out_adapt} -j MASQUERADE\n\
-#PostUp = iptables -I FORWARD -i wg0 -o wg0 -j DROP\n\
-#PreDown = iptables -t nat -D POSTROUTING -s ${wg_net}/24 -o ${out_adapt} -j MASQUERADE\n\
-#PreDown = iptables -D FORWARD -i wg0 -o wg0 -j DROP\n\
-#ListenPort = ${wg_port}\n\
-#SaveConfig = true\n\
-#DNS = ${global_dns}" > /configs/wg0.conf.template \
-#  && chmod 600 /configs/wg0.conf.template
 
 # Set a healthcheck to determine the container its health
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

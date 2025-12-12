@@ -98,7 +98,6 @@ ensure_installation() {
 
   # Setup WireGuard if needed
   if [ -z "$(ls -A /etc/wireguard)" ]; then
-    cat /configs/wg0.conf.template
     cp -a "/configs/wg0.conf.template" "/etc/wireguard/wg0.conf"
 
     echo "Setting a secure private key."

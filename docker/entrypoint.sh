@@ -98,6 +98,7 @@ ensure_installation() {
 
   # Setup WireGuard if needed
   if [ -z "$(ls -A /etc/wireguard)" ]; then
+    cat /configs/wg0.conf.template
     cp -a "/configs/wg0.conf.template" "/etc/wireguard/wg0.conf"
 
     echo "Setting a secure private key."
@@ -192,6 +193,9 @@ start_and_monitor() {
 
   [[ ! -d ${WGDASH}/src/log ]] && mkdir ${WGDASH}/src/log
   ${WGDASH}/src/venv/bin/gunicorn --config ${WGDASH}/src/gunicorn.conf.py
+
+  resolvconf -u
+
   if [ $? -ne 0 ]; then
     echo "Loading WGDashboard failed... Look above for details."
   fi

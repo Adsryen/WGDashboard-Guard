@@ -7,6 +7,8 @@ on:
       - 'main'
     tags:
       - '*'
+    paths:
+      - 'src/**'
   release:
     types: [ published ]
 

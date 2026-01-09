@@ -104,7 +104,7 @@ Updating the WGDashboard container should be through 'The Docker Way' - by pulli
 | `username`         | Any non‐empty string                     | `-`                     | `admin`                  | Username for the WGDashboard web interface account.                     |
 | `password`         | Any non‐empty string                     | `-`                     | `s3cr3tP@ss`             | Password for the WGDashboard web interface account (stored hashed).     |
 | `enable_totp`      | `true`, `false`                          | `true`                  | `false`                  | Enable TOTP‐based two‐factor authentication for the account.            |
-| `wg_autostart`     | Wireguard interface name                 | `-`                     | `wg0` or `wg0||wg1||wg2` | Auto‐start the WireGuard interface when the container launches.         |
+| `wg_autostart`     | Wireguard interface name                 | `-`                     | `wg0` or `wg0\|\|wg1\|\|wg2` | Auto‐start the WireGuard interface when the container launches.         |
 | `email_server`     | SMTP server address                      | `-`                     | `smtp.gmail.com`         | SMTP server for sending email notifications.                            |
 | `email_port`       | SMTP port number                         | `-`                     | `587`                    | Port for connecting to the SMTP server.                                 |
 | `email_encryption` | `TLS`, `SSL`, etc.                       | `-`                     | `TLS`                    | Encryption method for email communication.                              |

@@ -176,8 +176,16 @@ set_envvars() {
   set_ini Peers peer_global_dns "${global_dns}"
 
   if [ -z "${public_ip}" ]; then
-    public_ip=$(curl -s ifconfig.me)
-    echo "Automatically detected public IP: ${public_ip}" 
+    public_ip=$(curl -s https://ifconfig.me)
+    if [ -z "${public_ip}" ]; then
+        echo "Using fallback public IP resolution website"
+        public_ip=$(curl -s https://api.ipify.org)
+    fi
+    if [ -z "${public_ip}" ]; then
+        echo "Failed to resolve publicly. Using private address."
+        public_ip=$(hostname -i)
+    fi
+    echo "Automatically detected public IP: ${public_ip}"
   fi
 
   set_ini Peers remote_endpoint "${public_ip}"

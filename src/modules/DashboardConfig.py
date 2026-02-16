@@ -135,6 +135,8 @@ class DashboardConfig:
                 ]
 
                 for table_name in tables_to_check:
+                    if not table_name:
+                        continue
                     if not inspector.has_table(table_name):
                         continue
 

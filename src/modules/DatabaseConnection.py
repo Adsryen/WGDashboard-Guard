@@ -1,7 +1,6 @@
 import configparser
 import os
 from sqlalchemy_utils import database_exists, create_database
-from flask import current_app
 
 def ConnectionString(database) -> str:    
     parser = configparser.ConfigParser(strict=False)
@@ -20,9 +19,7 @@ def ConnectionString(database) -> str:
     try:
         if not database_exists(cn):
             create_database(cn)
-            current_app.logger.info(f"Database {database} created.")
     except Exception as e:
-        current_app.logger.error("Database error. Terminating...", e)
         exit(1)
 
     return cn

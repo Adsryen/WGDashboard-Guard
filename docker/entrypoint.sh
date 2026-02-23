@@ -122,7 +122,7 @@ ensure_installation() {
   # PERSISTENCE FOR wg-dashboard-oidc-providers.json
   if [ ! -f "/data/wg-dashboard-oidc-providers.json" ]; then
     echo "Creating wg-dashboard-oidc-providers.json file"
-    touch "/data/wg-dashboard-oidc-providers.json"
+    cp -v /tmp/wg-dashboard-oidc-providers.json.template /data/wg-dashboard-oidc-providers.json
   fi
   if [[ ! -L "${WGDASH}/src/wg-dashboard-oidc-providers.json" ]] && [[ -f "${WGDASH}/src/wg-dashboard-oidc-providers.json" ]]; then
     echo "Removing ${WGDASH}/src/wg-dashboard-oidc-providers.json since its not a symbolic link."

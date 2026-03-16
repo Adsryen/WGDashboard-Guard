@@ -97,6 +97,7 @@ Updating the WGDashboard container should be through 'The Docker Way' - by pulli
 
 | Variable           | Accepted Values                          | Default                 | Example               | Description                                                             |
 | ------------------ | ---------------------------------------- | ----------------------- | --------------------- | ----------------------------------------------------------------------- |
+| `dynamic_config`   | true, yes, false, no                     | `true`                  | `true` or `no`        | Turns on or off the dynamic configuration feature, on by default for Docker |
 | `tz`               | Timezone                                 | `Europe/Amsterdam`      | `America/New_York`    | Sets the container's timezone. Useful for accurate logs and scheduling. |
 | `global_dns`       | IPv4 and IPv6 addresses                  | `9.9.9.9`               | `8.8.8.8`, `1.1.1.1`  | Default DNS for WireGuard clients.                                      |
 | `public_ip`        | Public IP address                        | Retrieved automatically | `253.162.134.73`      | Used to generate accurate client configs. Needed if container is NAT’d. |

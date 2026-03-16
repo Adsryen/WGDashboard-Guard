@@ -114,7 +114,8 @@ ENV TZ="Europe/Amsterdam" \
     global_dns="9.9.9.9" \
     wgd_port="10086" \
     public_ip="" \
-    WGDASH=/opt/wgdashboard
+    WGDASH=/opt/wgdashboard \
+    dynamic_config="true"
 
 # Create directories needed for operation
 RUN mkdir /data /configs -p ${WGDASH}/src /etc/amnezia/amneziawg \

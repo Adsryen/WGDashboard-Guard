@@ -85,8 +85,6 @@ echo "------------------------- START ----------------------------"
 echo "Starting the WGDashboard Docker container."
 
 ensure_installation() {
-  echo "Quick-installing..."
-
   # Make the wgd.sh script executable.
   chmod +x "${WGDASH}"/src/wgd.sh
   cd "${WGDASH}"/src || exit
@@ -170,6 +168,9 @@ set_envvars() {
   # Check if config file is empty
   if [ ! -s "${config_file}" ]; then
     echo "Config file is empty. Creating initial structure."
+  elif [[ ${dynamic_config,,} =~ ^(false|no)$ ]]; then
+    echo "Dynamic configuration feature turned off, not changing anything"
+    return
   fi
 
   echo "Checking basic configuration:"

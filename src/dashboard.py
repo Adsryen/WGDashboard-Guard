@@ -249,7 +249,6 @@ def auth_req():
             whiteList = [
                 '/static/', 'validateAuthentication', 'authenticate', 'getDashboardConfiguration',
                 'getDashboardTheme', 'getDashboardVersion', 'sharePeer/get', 'isTotpEnabled', 'locale',
-                '/fileDownload',
                 '/client'
             ]
             

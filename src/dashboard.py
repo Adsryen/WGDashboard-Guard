@@ -249,12 +249,14 @@ def auth_req():
             whiteList = [
                 '/static/', 'validateAuthentication', 'authenticate', 'getDashboardConfiguration',
                 'getDashboardTheme', 'getDashboardVersion', 'sharePeer/get', 'isTotpEnabled', 'locale',
-                '/client'
             ]
-            
-            if (("username" not in session or session.get("role") != "admin") 
-                    and (f"{(APP_PREFIX if len(APP_PREFIX) > 0 else '')}/" != request.path 
-                    and f"{(APP_PREFIX if len(APP_PREFIX) > 0 else '')}" != request.path)
+            appPrefix = APP_PREFIX if len(APP_PREFIX) > 0 else ''
+            clientPrefix = f"{appPrefix}/client"
+
+            if (("username" not in session or session.get("role") != "admin")
+                    and (f"{appPrefix}/" != request.path
+                    and f"{appPrefix}" != request.path)
+                    and not request.path.startswith(clientPrefix)
                     and len(list(filter(lambda x : x not in request.path, whiteList))) == len(whiteList)
             ):
                 response = Flask.make_response(app, {

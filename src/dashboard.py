@@ -246,18 +246,26 @@ def auth_req():
             DashboardConfig.APIAccessed = True
         else:
             DashboardConfig.APIAccessed = False
-            whiteList = [
-                '/static/', 'validateAuthentication', 'authenticate', 'getDashboardConfiguration',
-                'getDashboardTheme', 'getDashboardVersion', 'sharePeer/get', 'isTotpEnabled', 'locale',
-            ]
             appPrefix = APP_PREFIX if len(APP_PREFIX) > 0 else ''
-            clientPrefix = f"{appPrefix}/client"
+            whiteList = [
+                # f'/static/', 
+                f'{appPrefix}/api/validateAuthentication', 
+                f'{appPrefix}/api/authenticate', 
+                # f'{appPrefix}/api/getDashboardConfiguration',
+                f'{appPrefix}/api/getDashboardTheme', 
+                f'{appPrefix}/api/getDashboardVersion', 
+                f'{appPrefix}/api/sharePeer/get', 
+                f'{appPrefix}/api/isTotpEnabled', 
+                f'{appPrefix}/api/locale',
+            ]
+        
 
-            if (("username" not in session or session.get("role") != "admin")
-                    and (f"{appPrefix}/" != request.path
-                    and f"{appPrefix}" != request.path)
-                    and not request.path.startswith(clientPrefix)
-                    and len(list(filter(lambda x : x not in request.path, whiteList))) == len(whiteList)
+            if (    
+                    ("username" not in session or session.get("role") != "admin")
+                    and (f"{appPrefix}/" != request.path and f"{appPrefix}" != request.path)
+                    and not request.path.startswith(f'{appPrefix}/client')
+                    and not request.path.startswith(f'{appPrefix}/static')
+                    and request.path not in whiteList
             ):
                 response = Flask.make_response(app, {
                     "status": False,

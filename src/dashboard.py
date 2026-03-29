@@ -246,17 +246,26 @@ def auth_req():
             DashboardConfig.APIAccessed = True
         else:
             DashboardConfig.APIAccessed = False
+            appPrefix = APP_PREFIX if len(APP_PREFIX) > 0 else ''
             whiteList = [
-                '/static/', 'validateAuthentication', 'authenticate', 'getDashboardConfiguration',
-                'getDashboardTheme', 'getDashboardVersion', 'sharePeer/get', 'isTotpEnabled', 'locale',
-                '/fileDownload',
-                '/client'
+                # f'/static/', 
+                f'{appPrefix}/api/validateAuthentication', 
+                f'{appPrefix}/api/authenticate', 
+                # f'{appPrefix}/api/getDashboardConfiguration',
+                f'{appPrefix}/api/getDashboardTheme', 
+                f'{appPrefix}/api/getDashboardVersion', 
+                f'{appPrefix}/api/sharePeer/get', 
+                f'{appPrefix}/api/isTotpEnabled', 
+                f'{appPrefix}/api/locale',
             ]
-            
-            if (("username" not in session or session.get("role") != "admin") 
-                    and (f"{(APP_PREFIX if len(APP_PREFIX) > 0 else '')}/" != request.path 
-                    and f"{(APP_PREFIX if len(APP_PREFIX) > 0 else '')}" != request.path)
-                    and len(list(filter(lambda x : x not in request.path, whiteList))) == len(whiteList)
+        
+
+            if (    
+                    ("username" not in session or session.get("role") != "admin")
+                    and (f"{appPrefix}/" != request.path and f"{appPrefix}" != request.path)
+                    and not request.path.startswith(f'{appPrefix}/client')
+                    and not request.path.startswith(f'{appPrefix}/static')
+                    and request.path not in whiteList
             ):
                 response = Flask.make_response(app, {
                     "status": False,
@@ -601,12 +610,19 @@ def API_deleteWireguardConfigurationBackup():
 
 @app.get(f'{APP_PREFIX}/api/downloadWireguardConfigurationBackup')
 def API_downloadWireguardConfigurationBackup():
-    configurationName = request.args.get('configurationName')
-    backupFileName = request.args.get('backupFileName')
+    configurationName = os.path.basename(request.args.get('configurationName'))
+    backupFileName = os.path.basename(request.args.get('backupFileName'))
+
     if configurationName is None or configurationName not in WireguardConfigurations.keys():
         return ResponseObject(False, "Configuration does not exist", status_code=404)
+
     status, zip = WireguardConfigurations[configurationName].downloadBackup(backupFileName)
-    return ResponseObject(status, data=zip, status_code=(200 if status else 404))
+
+    if not status:
+        current_app.logger.error(f"Failed to download a requested backup.\nConfiguration Name: {configurationName}\nBackup File Name: {backupFileName}")
+        return ResponseObject(False, "Internal server error", status_code=500)
+
+    return send_file(os.path.join('download', zip), as_attachment=True)
 
 @app.post(f'{APP_PREFIX}/api/restoreWireguardConfigurationBackup')
 def API_restoreWireguardConfigurationBackup():
@@ -1206,20 +1222,6 @@ def API_getPeerScheduleJobLogs(configName):
     if data is not None and data == "true":
         requestAll = True
     return ResponseObject(data=AllPeerJobs.getPeerJobLogs(configName))
-
-'''
-File Download
-'''
-@app.get(f'{APP_PREFIX}/fileDownload')
-def API_download():
-    file = request.args.get('file')
-    if file is None or len(file) == 0:
-        return ResponseObject(False, "Please specify a file")
-    if os.path.exists(os.path.join('download', file)):
-        return send_file(os.path.join('download', file), as_attachment=True)
-    else:
-        return ResponseObject(False, "File does not exist")
-
 
 '''
 Tools

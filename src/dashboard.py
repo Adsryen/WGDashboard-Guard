@@ -251,18 +251,26 @@ def auth_req():
             DashboardConfig.APIAccessed = True
         else:
             DashboardConfig.APIAccessed = False
+            appPrefix = APP_PREFIX if len(APP_PREFIX) > 0 else ''
             whiteList = [
-                '/static/', 'validateAuthentication', 'authenticate', 'getDashboardConfiguration',
-                'getDashboardTheme', 'getDashboardVersion', 'sharePeer/get', 'isTotpEnabled', 'locale',
-                '/client',
-                '/assets/', '/img/', '/json/',
-                '/client/assets/', '/client/img/'
+                # f'/static/', 
+                f'{appPrefix}/api/validateAuthentication', 
+                f'{appPrefix}/api/authenticate', 
+                # f'{appPrefix}/api/getDashboardConfiguration',
+                f'{appPrefix}/api/getDashboardTheme', 
+                f'{appPrefix}/api/getDashboardVersion', 
+                f'{appPrefix}/api/sharePeer/get', 
+                f'{appPrefix}/api/isTotpEnabled', 
+                f'{appPrefix}/api/locale',
             ]
-            
-            if (("username" not in session or session.get("role") != "admin") 
-                    and (f"{(APP_PREFIX if len(APP_PREFIX) > 0 else '')}/" != request.path 
-                    and f"{(APP_PREFIX if len(APP_PREFIX) > 0 else '')}" != request.path)
-                    and len(list(filter(lambda x : x not in request.path, whiteList))) == len(whiteList)
+        
+
+            if (    
+                    ("username" not in session or session.get("role") != "admin")
+                    and (f"{appPrefix}/" != request.path and f"{appPrefix}" != request.path)
+                    and not request.path.startswith(f'{appPrefix}/client')
+                    and not request.path.startswith(f'{appPrefix}/static')
+                    and request.path not in whiteList
             ):
                 response = Flask.make_response(app, {
                     "status": False,
@@ -1477,7 +1485,7 @@ def API_Locale_Update():
 
 @app.get(f'{APP_PREFIX}/api/email/ready')
 def API_Email_Ready():
-    return ResponseObject(EmailSender.is_ready())
+    return ResponseObject(EmailSender.ready())
 
 @app.post(f'{APP_PREFIX}/api/email/send')
 def API_Email_Send():

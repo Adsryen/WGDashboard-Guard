@@ -269,7 +269,8 @@ def auth_req():
                     ("username" not in session or session.get("role") != "admin")
                     and (f"{appPrefix}/" != request.path and f"{appPrefix}" != request.path)
                     and not request.path.startswith(f'{appPrefix}/client')
-                    and not request.path.startswith(f'{appPrefix}/static')
+                    and not request.path.startswith(f'{appPrefix}/img')
+                    and not request.path.startswith(f'{appPrefix}/assets')
                     and request.path not in whiteList
             ):
                 response = Flask.make_response(app, {

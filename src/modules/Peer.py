@@ -84,19 +84,19 @@ class Peer:
 
         if allowed_ip in used_allowed_ips:
             return False, "Allowed IP already taken by another peer"
-        
+
         if not ValidateDNSAddress(dns_addresses):
             return False, f"DNS IP-Address or FQDN is incorrect"
-        
+
         if isinstance(mtu, str):
             mtu = 0
 
         if isinstance(keepalive, str):
             keepalive = 0
-        
+
         if mtu not in range(0, 1461):
             return False, "MTU format is not correct"
-        
+
         if keepalive < 0:
             return False, "Persistent Keepalive format is not correct"
 
@@ -117,7 +117,7 @@ class Peer:
             newAllowedIPs = allowed_ip.replace(" ", "")
             if not CheckAddress(newAllowedIPs):
                     return False, "Allowed IPs entry format is incorrect"
-                
+
             command = [self.configuration.Protocol, "set", self.configuration.Name, "peer", self.id, "allowed-ips", newAllowedIPs, "preshared-key", uid if psk_exist else "/dev/null"]
             updateAllowedIp = subprocess.check_output(command, stderr=subprocess.STDOUT)
 
@@ -168,14 +168,14 @@ class Peer:
         filename = re.sub(r'[.,/?<>\\:*|"]', '', filename).rstrip(". ") # remove special characters
 
         reserved_pattern = r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$" # match com1-9, lpt1-9, con, nul, prn, aux, nul
-    
+
         if re.match(reserved_pattern, filename, re.IGNORECASE):
             filename = f"file_{filename}" # prepend "file_" if it matches
 
         for i in filename:
             if re.match("^[a-zA-Z0-9_=+.-]$", i):
                 final["fileName"] += i
-                
+
         interfaceSection = {
             "PrivateKey": self.private_key,
             "Address": self.allowed_ip,
@@ -188,7 +188,7 @@ class Peer:
                     if self.configuration.configurationInfo.OverridePeerSettings.DNS else self.DNS
             )
         }
-        
+
         if self.configuration.Protocol == "awg":
             interfaceSection.update({
                 "Jc": self.configuration.Jc,
@@ -208,7 +208,7 @@ class Peer:
                 "I4": self.configuration.I4,
                 "I5": self.configuration.I5
             })
-            
+
         peerSection = {
             "PublicKey": self.configuration.PublicKey,
             "AllowedIPs": (
@@ -232,7 +232,7 @@ class Peer:
             for (key, val) in combine[s]:
                 if val is not None and ((type(val) is str and len(val) > 0) or (type(val) is int and val > 0)):
                     final["file"] += f"{key} = {val}\n"
-        
+
         final["file"] = jinja2.Template(final["file"]).render(configuration=self.configuration)
 
 

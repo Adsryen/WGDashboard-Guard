@@ -72,7 +72,7 @@ class Peer:
         peers = []
         for peer in self.configuration.getPeersList():
             # Make sure to exclude your own data when updating since its not really relevant
-            if peer.id != self.id:
+            if peer.id == self.id:
                 continue
             peers.append(peer)
 

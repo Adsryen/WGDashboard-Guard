@@ -32,6 +32,7 @@ Chart.register(
 import PeerSessions from "@/components/peerDetailsModalComponents/peerSessions.vue";
 import PeerTraffics from "@/components/peerDetailsModalComponents/peerTraffics.vue";
 import PeerEndpoints from "@/components/peerDetailsModalComponents/peerEndpoints.vue";
+import { GetLocale } from "@/utilities/locale"
 const props = defineProps(['selectedPeer'])
 const selectedDate = ref(undefined)
 defineEmits(['close'])
@@ -49,13 +50,15 @@ defineEmits(['close'])
 						<button type="button" class="btn-close ms-auto" @click="$emit('close')"></button>
 					</div>
 					<div class="card-body px-4">
-						<div class="d-flex justify-content-between align-items-start mb-2">
+						<div class="d-flex justify-content-between align-items-start mb-2 flex-column flex-md-row">
 							<div>
 								<p class="mb-0 text-muted"><small><LocaleText t="Peer" /></small></p>
-								<h2 class="mb-0">{{ selectedPeer.name }}</h2>
+								<h2 :class="{'text-muted': selectedPeer.name.length === 0 }">
+									{{ selectedPeer.name.length > 0 ? selectedPeer.name : GetLocale("Untitled Peer") }}
+								</h2>
 							</div>
 
-							<div v-if="selectedPeer.notes" class="text-end">
+							<div v-if="selectedPeer.notes" class="text-start text-md-end">
 								<p class="mb-0 text-muted"><small><LocaleText t="Notes" /></small></p>
 								<p class="mb-0" style="white-space: pre-wrap">{{ selectedPeer.notes }}</p>
 							</div>

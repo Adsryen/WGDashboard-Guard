@@ -22,7 +22,7 @@ updates:
     target-branch: "development"
     schedule:
       interval: "weekly"
-      
+
   - package-ecosystem: "github-actions"
     directory: "/.github"
     target-branch: "development"

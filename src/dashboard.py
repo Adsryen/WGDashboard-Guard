@@ -270,6 +270,7 @@ def auth_req():
                     and (f"{appPrefix}/" != request.path and f"{appPrefix}" != request.path)
                     and not request.path.startswith(f'{appPrefix}/client')
                     and not request.path.startswith(f'{appPrefix}/img')
+                    and not request.path.startswith(f'{appPrefix}/json')
                     and not request.path.startswith(f'{appPrefix}/assets')
                     and request.path not in whiteList
             ):
@@ -1486,7 +1487,7 @@ def API_Locale_Update():
 
 @app.get(f'{APP_PREFIX}/api/email/ready')
 def API_Email_Ready():
-    return ResponseObject(EmailSender.ready())
+    return ResponseObject(EmailSender.is_ready())
 
 @app.post(f'{APP_PREFIX}/api/email/send')
 def API_Email_Send():

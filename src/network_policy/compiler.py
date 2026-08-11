@@ -49,11 +49,13 @@ def _rule_expression(policy: NetworkPolicy, rule: NetworkPolicyRule) -> str:
 
     expression = (
         f'iifname "{policy.interface_name}" {family} saddr {policy.tunnel_address} '
-        f'{family} daddr {rule.destination} {rule.protocol}'
+        f'{family} daddr {rule.destination}'
     )
     if rule.port_from is not None:
         port_range = str(rule.port_from) if rule.port_from == rule.port_to else f"{rule.port_from}-{rule.port_to}"
-        expression += f" dport {port_range}"
+        expression += f" {rule.protocol} dport {port_range}"
+    else:
+        expression += f" meta l4proto {rule.protocol}"
     return expression
 
 

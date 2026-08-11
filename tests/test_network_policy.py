@@ -76,7 +76,10 @@ class NetworkPolicyCompilerTest(unittest.TestCase):
         ruleset, digest = compile_ruleset([policy])
 
         self.assertIn(f"flush table inet {TABLE_NAME}", ruleset)
-        self.assertIn('iifname "wg0" ip saddr 10.8.0.2 ip daddr 192.168.0.170/32 tcp accept', ruleset)
+        self.assertIn(
+            'iifname "wg0" ip saddr 10.8.0.2 ip daddr 192.168.0.170/32 meta l4proto tcp accept',
+            ruleset,
+        )
         self.assertIn('tcp dport 8118 accept', ruleset)
         self.assertLess(ruleset.index('tcp dport 8118 accept'), ruleset.index('counter drop'))
         self.assertIn(f'wgd-policy:{digest}', ruleset)

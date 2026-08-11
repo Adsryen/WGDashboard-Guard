@@ -22,6 +22,7 @@ const PeerJobsLogsModal = defineAsyncComponent(() => import("@/components/config
 const EditConfigurationModal = defineAsyncComponent(() => import("@/components/configurationComponents/editConfiguration.vue"))
 const SelectPeersModal = defineAsyncComponent(() => import("@/components/configurationComponents/selectPeers.vue"))
 const PeerAddModal = defineAsyncComponent(() => import("@/components/configurationComponents/peerAddModal.vue"))
+const NetworkPolicyModal = defineAsyncComponent(() => import("@/components/networkPolicy/networkPolicyModal.vue"))
 
 const dashboardStore = DashboardConfigurationStore()
 const wireguardConfigurationStore = WireguardConfigurationsStore()
@@ -77,6 +78,9 @@ const configurationModals = ref({
 		modalOpen: false
 	},
 	peerDetails: {
+		modalOpen: false
+	},
+	networkPolicy: {
 		modalOpen: false
 	}
 })
@@ -427,6 +431,7 @@ watch(() => route.query.id, (newValue) => {
 				      @qrcode="configurationModalSelectedPeer = peer; configurationModals.peerQRCode.modalOpen = true;"
 				      @configurationFile="configurationModalSelectedPeer = peer; configurationModals.peerConfigurationFile.modalOpen = true;"
 				      @assign="configurationModalSelectedPeer = peer; configurationModals.assignPeer.modalOpen = true;"
+				      @networkPolicy="configurationModalSelectedPeer = peer; configurationModals.networkPolicy.modalOpen = true;"
 				></Peer>
 			</div>
 		</TransitionGroup>
@@ -490,6 +495,12 @@ watch(() => route.query.id, (newValue) => {
 			@close="configurationModals.peerDetails.modalOpen = false"
 		>
 		</PeerDetailsModal>
+		<NetworkPolicyModal
+			key="NetworkPolicyModal"
+			v-if="configurationModals.networkPolicy.modalOpen"
+			:selectedPeer="configurationModalSelectedPeer"
+			@close="configurationModals.networkPolicy.modalOpen = false"
+		></NetworkPolicyModal>
 	</TransitionGroup>
 	<PeerIntersectionObserver
 		:showPeersCount="showPeersCount"

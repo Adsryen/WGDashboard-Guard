@@ -9,6 +9,7 @@ src/test.py
 src/wg-dashboard.ini
 src/static/pic.xd
 *.conf
+!deploy/systemd/tmpfiles.d/*.conf
 private_key.txt
 public_key.txt
 *venv*

@@ -1,0 +1,26 @@
+[Unit]
+Description=WGDashboard Network Policy Agent
+Documentation=https://github.com/WGDashboard/WGDashboard
+After=network-online.target systemd-tmpfiles-setup.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/WGDashboard/src
+Environment=PYTHONPATH=/opt/WGDashboard/src
+ExecStart=/usr/bin/python3 -m network_policy.agent --socket /run/wgd-network-policy/agent.sock --socket-group wgdpolicy
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/run/wgd-network-policy
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

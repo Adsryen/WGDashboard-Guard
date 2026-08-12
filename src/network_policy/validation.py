@@ -11,7 +11,7 @@ from typing import Any
 PUBLIC_KEY_PATTERN = re.compile(r"^[A-Za-z0-9+/]{43}=$")
 INTERFACE_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,15}$")
 CONFIGURATION_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,63}$")
-SUPPORTED_PROTOCOLS = {"tcp", "udp"}
+SUPPORTED_PROTOCOLS = {"tcp", "udp", "icmp"}
 
 
 class PolicyValidationError(ValueError):
@@ -67,13 +67,15 @@ class NetworkPolicyRule:
         destination = _network(payload.get("destination"))
         protocol = payload.get("protocol")
         if protocol not in SUPPORTED_PROTOCOLS:
-            raise PolicyValidationError("protocol must be tcp or udp")
+            raise PolicyValidationError("protocol must be tcp, udp, or icmp")
 
         ports = payload.get("ports")
         if ports is None:
             port_from = None
             port_to = None
         else:
+            if protocol == "icmp":
+                raise PolicyValidationError("icmp rules cannot contain ports")
             if not isinstance(ports, dict):
                 raise PolicyValidationError("ports must be null or an object")
             port_from = _port(ports.get("from"), "ports.from")
@@ -97,6 +99,7 @@ class NetworkPolicy:
     peer_public_key: str
     tunnel_address: str
     managed: bool
+    icmp_restricted: bool
     rules: tuple[NetworkPolicyRule, ...]
 
     @classmethod
@@ -121,6 +124,10 @@ class NetworkPolicy:
         if not isinstance(managed, bool):
             raise PolicyValidationError("managed must be a boolean")
 
+        icmp_restricted = payload.get("icmp_restricted", False)
+        if not isinstance(icmp_restricted, bool):
+            raise PolicyValidationError("icmp_restricted must be a boolean")
+
         raw_rules = payload.get("rules", [])
         if not isinstance(raw_rules, list):
             raise PolicyValidationError("rules must be an array")
@@ -134,6 +141,7 @@ class NetworkPolicy:
             peer_public_key=peer_public_key,
             tunnel_address=str(tunnel_address),
             managed=managed,
+            icmp_restricted=icmp_restricted,
             rules=rules,
         )
 
@@ -144,6 +152,7 @@ class NetworkPolicy:
             "peer_public_key": self.peer_public_key,
             "tunnel_address": self.tunnel_address,
             "managed": self.managed,
+            "icmp_restricted": self.icmp_restricted,
             "rules": [rule.to_payload() for rule in self.rules],
         }
 

@@ -69,6 +69,21 @@ class NetworkPolicyValidationTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             compile_ruleset([policy])
 
+    def test_accepts_icmp_without_ports_and_rejects_icmp_port_ranges(self):
+        policy = validate_policy(policy_payload(rules=[{
+            "destination": "192.168.0.170",
+            "protocol": "icmp",
+            "ports": None,
+        }]))
+        self.assertEqual("icmp", policy.rules[0].protocol)
+
+        with self.assertRaises(PolicyValidationError):
+            validate_policy(policy_payload(rules=[{
+                "destination": "192.168.0.170",
+                "protocol": "icmp",
+                "ports": {"from": 8, "to": 8},
+            }]))
+
 
 class NetworkPolicyCompilerTest(unittest.TestCase):
     def test_compiles_allow_before_per_peer_default_drop(self):
@@ -81,10 +96,31 @@ class NetworkPolicyCompilerTest(unittest.TestCase):
             ruleset,
         )
         self.assertIn('tcp dport 8118 accept', ruleset)
+        self.assertIn('meta l4proto icmp accept', ruleset)
         self.assertLess(ruleset.index('tcp dport 8118 accept'), ruleset.index('counter drop'))
         self.assertIn(f'wgd-policy:{digest}', ruleset)
         self.assertNotIn("input", ruleset)
         self.assertNotIn("dport 22", ruleset)
+
+    def test_icmp_is_allowed_by_default_and_can_be_restricted(self):
+        unrestricted = validate_policy(policy_payload())
+        unrestricted_ruleset, _ = compile_ruleset([unrestricted])
+        self.assertIn('meta l4proto icmp accept', unrestricted_ruleset)
+
+        restricted = validate_policy(policy_payload(
+            icmp_restricted=True,
+            rules=[{"destination": "192.168.0.170", "protocol": "icmp", "ports": None}],
+        ))
+        restricted_ruleset, _ = compile_ruleset([restricted])
+        self.assertEqual(1, restricted_ruleset.count('meta l4proto icmp accept'))
+
+    def test_ipv6_icmp_uses_the_ipv6_protocol_name(self):
+        policy = validate_policy(policy_payload(
+            tunnel_address="2001:db8::2",
+            rules=[{"destination": "2001:db8:1::1", "protocol": "icmp", "ports": None}],
+        ))
+        ruleset, _ = compile_ruleset([policy])
+        self.assertIn('meta l4proto ipv6-icmp accept', ruleset)
 
     def test_hash_is_stable_for_rule_order(self):
         original = validate_policy(policy_payload())

@@ -4,7 +4,7 @@ import {DashboardConfigurationStore} from "@/stores/DashboardConfigurationStore.
 import LocaleText from "@/components/text/localeText.vue";
 import {GetLocale} from "@/utilities/locale.js";
 
-const emptyPolicy = () => ({managed: false, rules: []});
+const emptyPolicy = () => ({managed: false, icmp_restricted: false, rules: []});
 
 export default {
 	name: "networkPolicyModal",
@@ -50,15 +50,19 @@ export default {
 			return this.capabilities?.capabilities?.supported === true && !this.loading && !this.applying
 		},
 		canReview(){
-			return this.policy.managed && this.policy.rules.length > 0 && this.policy.rules.every((rule) => {
+			if (!this.policy.managed) return false;
+			const hasValidRules = this.policy.rules.every((rule) => {
 				if (!rule.destination || !rule.protocol) return false;
+				if (rule.protocol === "icmp") return rule.ports === null;
 				if (rule.ports === null) return true;
 				return Number.isInteger(rule.ports?.from) && Number.isInteger(rule.ports?.to)
 					&& rule.ports.from >= 1 && rule.ports.to >= rule.ports.from && rule.ports.to <= 65535;
 			});
+			return hasValidRules && (!this.policy.icmp_restricted
+				|| this.policy.rules.some((rule) => rule.protocol === "icmp"));
 		},
 		allPortsRuleCount(){
-			return this.policy.rules.filter((rule) => rule.ports === null).length;
+			return this.policy.rules.filter((rule) => rule.protocol !== "icmp" && rule.ports === null).length;
 		},
 		primaryActionLabel(){
 			return this.previewRequired ? "Review changes" : "Apply reviewed changes"
@@ -130,6 +134,7 @@ export default {
 				peer_public_key: this.target.peer.id,
 				tunnel_address: this.tunnelAddress,
 				managed: this.policy.managed,
+				icmp_restricted: this.policy.icmp_restricted,
 				rules: this.policy.rules
 			}
 		},
@@ -175,6 +180,9 @@ export default {
 		},
 		setAllPorts(rule, enabled){
 			rule.ports = enabled ? null : {from: null, to: null};
+		},
+		onProtocolChange(rule){
+			if (rule.protocol === "icmp") rule.ports = null;
 		},
 		async copyPeerKey(){
 			const peerKey = this.target.peer?.id || "";
@@ -343,6 +351,18 @@ export default {
 				</div>
 			</section>
 
+			<section class="policy-section policy-icmp-section mb-3" :class="{'policy-section-disabled': !policy.managed}">
+				<div class="d-flex align-items-start gap-3">
+					<div class="form-check form-switch m-0 pt-1">
+						<input class="form-check-input" id="network-policy-icmp-restricted" type="checkbox" v-model="policy.icmp_restricted" :disabled="!policy.managed">
+					</div>
+					<div>
+						<label class="form-check-label fw-semibold" for="network-policy-icmp-restricted"><LocaleText t="Restrict ICMP diagnostics" /></label>
+						<div class="small text-muted"><LocaleText :t="policy.icmp_restricted ? 'ICMP is allowed only for destinations with an ICMP rule below.' : 'ICMP diagnostics are allowed to all destinations by default.'" /></div>
+					</div>
+				</div>
+			</section>
+
 			<section class="policy-section policy-rules-section mb-3" :class="{'policy-section-disabled': !policy.managed}">
 				<div class="d-flex align-items-center gap-2 mb-1">
 					<div>
@@ -360,22 +380,23 @@ export default {
 						</div>
 						<div class="col-6 col-md-2">
 							<label class="form-label small"><LocaleText t="Protocol"></LocaleText></label>
-							<select class="form-select" v-model="rule.protocol"><option value="tcp">TCP</option><option value="udp">UDP</option></select>
+							<select class="form-select" v-model="rule.protocol" @change="onProtocolChange(rule)"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="icmp">ICMP</option></select>
 						</div>
 						<div class="col-5 col-md-3">
 							<label class="form-label small"><LocaleText t="Ports"></LocaleText></label>
-							<div v-if="rule.ports === null" class="form-control text-muted"><LocaleText t="All ports"></LocaleText></div>
+							<div v-if="rule.protocol === 'icmp'" class="form-control text-muted"><LocaleText t="No ports for ICMP"></LocaleText></div>
+							<div v-else-if="rule.ports === null" class="form-control text-muted"><LocaleText t="All ports"></LocaleText></div>
 							<div v-else class="d-flex gap-1"><input class="form-control" type="number" min="1" max="65535" v-model.number="rule.ports.from" :placeholder="GetLocale('From')"><input class="form-control" type="number" min="1" max="65535" v-model.number="rule.ports.to" :placeholder="GetLocale('To')"></div>
 						</div>
 						<div class="col-1 col-md-2 d-flex justify-content-end gap-1 rule-actions">
-							<button type="button" class="btn btn-outline-secondary" :title="GetLocale(rule.ports === null ? 'Use port range' : 'Allow all ports')" @click="setAllPorts(rule, rule.ports !== null)"><i :class="rule.ports === null ? 'bi bi-list-ol' : 'bi bi-infinity'"></i></button>
+							<button v-if="rule.protocol !== 'icmp'" type="button" class="btn btn-outline-secondary" :title="GetLocale(rule.ports === null ? 'Use port range' : 'Allow all ports')" @click="setAllPorts(rule, rule.ports !== null)"><i :class="rule.ports === null ? 'bi bi-list-ol' : 'bi bi-infinity'"></i></button>
 							<button type="button" class="btn btn-outline-danger" :title="GetLocale('Remove rule')" @click="removeRule(index)"><i class="bi bi-trash"></i></button>
 						</div>
 					</div>
 				</div>
 				</fieldset>
 				<div v-if="!policy.managed" class="empty-rules empty-rules-muted"><i class="bi bi-slash-circle me-2"></i><LocaleText t="Enable forwarded access control to configure allowed destinations." /></div>
-				<div v-else-if="policy.rules.length === 0" class="empty-rules"><i class="bi bi-exclamation-triangle me-2"></i><LocaleText t="No destination is allowed. Applying this policy denies all forwarded traffic for this Peer." /></div>
+				<div v-else-if="policy.rules.length === 0" class="empty-rules"><i class="bi bi-exclamation-triangle me-2"></i><LocaleText :t="policy.icmp_restricted ? 'No destination is allowed. Applying this policy denies all forwarded traffic for this Peer.' : 'No TCP or UDP destination is allowed. ICMP diagnostics remain allowed to all destinations.'" /></div>
 			</section>
 
 			<section class="policy-actions">
@@ -404,7 +425,8 @@ export default {
 					<div><i class="bi bi-check-circle-fill text-success me-2"></i><LocaleText t="nftables syntax check passed in an isolated temporary table. No live forwarding rule was changed." /></div>
 					<div><i class="bi bi-shield-check text-primary me-2"></i><LocaleText t="Scope is limited to forwarded traffic from this Peer. Gateway SSH and WireGuard listener traffic are not changed." /></div>
 					<div v-if="allPortsRuleCount" class="text-warning-emphasis"><i class="bi bi-exclamation-triangle-fill me-2"></i><LocaleText t="One or more rules allow all ports. Confirm that this broad access is intended." /></div>
-					<div><i class="bi bi-shield-x text-warning-emphasis me-2"></i><LocaleText t="All other forwarded traffic from this Peer will be denied after application." /></div>
+					<div><i class="bi bi-shield-x text-warning-emphasis me-2"></i><LocaleText :t="policy.icmp_restricted ? 'All other forwarded traffic from this Peer will be denied after application.' : 'All other TCP and UDP forwarded traffic from this Peer will be denied after application.'" /></div>
+					<div v-if="!policy.icmp_restricted"><i class="bi bi-activity text-success me-2"></i><LocaleText t="ICMP diagnostics remain allowed to all destinations." /></div>
 				</div>
 				<pre class="ruleset-preview mb-0">{{ previewRuleset }}</pre>
 			</div>

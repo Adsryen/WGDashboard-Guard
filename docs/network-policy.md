@@ -44,7 +44,7 @@ The table may not exist until the first successful policy application. In that c
 ## Applying a Peer policy
 
 1. Open a Peer menu, select **Network Policy**, and choose one of that Peer’s single-host `AllowedIPs`.
-2. Add explicit TCP or UDP destination rules. An empty rule list means deny every forwarded destination for the Peer.
+2. Add explicit TCP, UDP, or ICMP destination rules. ICMP is allowed to every destination by default; enable **Restrict ICMP diagnostics** only when ICMP must be limited to explicit ICMP destination rules. An empty rule list denies every TCP/UDP forwarded destination for the Peer.
 3. Select **Preview** and inspect the generated nftables rules and hash.
 4. Select **Apply**. The Agent runs `nft --check`, replaces only its own table, rereads it, and verifies the hash.
 

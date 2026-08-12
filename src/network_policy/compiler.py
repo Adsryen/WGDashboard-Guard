@@ -51,7 +51,9 @@ def _rule_expression(policy: NetworkPolicy, rule: NetworkPolicyRule) -> str:
         f'iifname "{policy.interface_name}" {family} saddr {policy.tunnel_address} '
         f'{family} daddr {rule.destination}'
     )
-    if rule.port_from is not None:
+    if rule.protocol == "icmp":
+        expression += " meta l4proto icmp" if family == "ip" else " meta l4proto ipv6-icmp"
+    elif rule.port_from is not None:
         port_range = str(rule.port_from) if rule.port_from == rule.port_to else f"{rule.port_from}-{rule.port_to}"
         expression += f" {rule.protocol} dport {port_range}"
     else:
@@ -82,6 +84,13 @@ def compile_ruleset(policies: Iterable[NetworkPolicy], table_name: str = TABLE_N
                 f"{_rule_expression(validated, rule)} accept comment \"wgd-policy:{digest}\""
             )
         family = _address_family(validated.tunnel_address)
+        if not validated.icmp_restricted:
+            protocol = "icmp" if family == "ip" else "ipv6-icmp"
+            lines.append(
+                f"add rule {TABLE_FAMILY} {table_name} {CHAIN_NAME} "
+                f'iifname "{validated.interface_name}" {family} saddr {validated.tunnel_address} '
+                f"meta l4proto {protocol} accept comment \"wgd-policy:{digest}\""
+            )
         lines.append(
             f"add rule {TABLE_FAMILY} {table_name} {CHAIN_NAME} "
             f'iifname "{validated.interface_name}" {family} saddr {validated.tunnel_address} '

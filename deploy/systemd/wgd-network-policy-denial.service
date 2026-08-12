@@ -1,0 +1,29 @@
+[Unit]
+Description=WGDashboard Network Policy Denial Responder
+Documentation=https://github.com/WGDashboard/WGDashboard
+After=network-online.target wgd-network-policy-agent.service
+Wants=network-online.target
+Requires=wgd-network-policy-agent.service
+
+[Service]
+Type=simple
+DynamicUser=yes
+WorkingDirectory=/opt/WGDashboard/src
+Environment=PYTHONPATH=/opt/WGDashboard/src
+ExecStart=/usr/bin/python3 -m network_policy.denial_responder --host 0.0.0.0 --port 61573
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

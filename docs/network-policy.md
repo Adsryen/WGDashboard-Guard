@@ -17,10 +17,12 @@ The initial provider requires nftables and a Linux host. Install the Dashboard a
 ```bash
 sudo groupadd --system wgdpolicy
 sudo install -D -m 0644 deploy/systemd/wgd-network-policy-agent.service /etc/systemd/system/wgd-network-policy-agent.service
+sudo install -D -m 0644 deploy/systemd/wgd-network-policy-denial.service /etc/systemd/system/wgd-network-policy-denial.service
 sudo install -D -m 0644 deploy/systemd/tmpfiles.d/wgd-network-policy-agent.conf /etc/tmpfiles.d/wgd-network-policy-agent.conf
 sudo systemd-tmpfiles --create /etc/tmpfiles.d/wgd-network-policy-agent.conf
 sudo systemctl daemon-reload
 sudo systemctl enable --now wgd-network-policy-agent.service
+sudo systemctl enable --now wgd-network-policy-denial.service
 ```
 
 If WGDashboard does not run as root, add its service account to `wgdpolicy`, then restart that service so it receives the new group membership:
@@ -41,6 +43,12 @@ sudo nft list table inet wgd_network_policy
 
 The table may not exist until the first successful policy application. In that case, use the Dashboard capability endpoint and dry-run preview first.
 
+## Denied HTTP responses
+
+For an enabled Peer, a forwarded IPv4 HTTP request to an unallowed destination is redirected to the local denial responder and receives `403`. Browser-style requests receive an HTML page; requests that accept JSON, and `/api/` paths, receive JSON. HTTPS is not intercepted and remains a fast connection failure when unallowed.
+
+The responder uses TCP `61573`. It is not a public service and must not be added to a router port-forward. nftables permits it only for the managed Peer after the HTTP redirect, then rejects every direct connection to that port. It listens on the gateway addresses because nftables `redirect` preserves the original destination address; do not bypass or remove the owned input-chain guard.
+
 ## Applying a Peer policy
 
 1. Open a Peer menu, select **Network Policy**, and choose one of that Peer’s single-host `AllowedIPs`.
@@ -59,6 +67,7 @@ The following policy is represented by five allow rules plus one default drop fo
 
 ```bash
 sudo systemctl stop wgd-network-policy-agent.service
+sudo systemctl stop wgd-network-policy-denial.service
 sudo nft delete table inet wgd_network_policy
 ```
 

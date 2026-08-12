@@ -4,7 +4,9 @@ import pathlib
 import re
 import sys
 import tempfile
+import threading
 import unittest
+from http.client import HTTPConnection
 from subprocess import CompletedProcess
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
@@ -20,7 +22,8 @@ except ModuleNotFoundError:
 
 from network_policy.agent_protocol import AgentProtocolError, AgentRequest
 from network_policy.agent import NftablesExecutor
-from network_policy.compiler import TABLE_NAME, compile_check_ruleset, compile_ruleset, policy_hash
+from network_policy.compiler import DENIAL_RESPONSE_PORT, TABLE_NAME, compile_check_ruleset, compile_ruleset, policy_hash
+from network_policy.denial_responder import DenialRequestHandler, ThreadingHTTPServer
 from network_policy.validation import PolicyValidationError, validate_policy
 
 
@@ -99,9 +102,13 @@ class NetworkPolicyCompilerTest(unittest.TestCase):
         self.assertIn('ip daddr 192.168.0.170/32 meta l4proto icmp accept', ruleset)
         self.assertIn('ip daddr 192.168.10.117/32 meta l4proto icmp accept', ruleset)
         self.assertNotIn('ip saddr 10.8.0.2 meta l4proto icmp accept', ruleset)
-        self.assertLess(ruleset.index('tcp dport 8118 accept'), ruleset.index('counter drop'))
+        self.assertIn('tcp dport 80 redirect to :61573', ruleset)
+        self.assertIn(f'tcp dport {DENIAL_RESPONSE_PORT} accept', ruleset)
+        self.assertIn('meta l4proto tcp reject with tcp reset', ruleset)
+        self.assertIn('meta l4proto udp reject with icmp port-unreachable', ruleset)
+        self.assertIn(f'tcp dport {DENIAL_RESPONSE_PORT} reject with tcp reset', ruleset)
+        self.assertLess(ruleset.index('tcp dport 8118 accept'), ruleset.index('meta l4proto tcp reject'))
         self.assertIn(f'wgd-policy:{digest}', ruleset)
-        self.assertNotIn("input", ruleset)
         self.assertNotIn("dport 22", ruleset)
 
     def test_icmp_is_allowed_only_for_configured_destinations(self):
@@ -115,7 +122,29 @@ class NetworkPolicyCompilerTest(unittest.TestCase):
         self.assertEqual(2, ruleset.count('meta l4proto icmp accept'))
         self.assertIn('ip daddr 192.168.0.170/32 meta l4proto icmp accept', ruleset)
         self.assertIn('ip daddr 192.168.10.117/32 meta l4proto icmp accept', ruleset)
-        self.assertLess(ruleset.index('ip daddr 192.168.10.117/32 meta l4proto icmp accept'), ruleset.index('counter drop'))
+        self.assertLess(ruleset.index('ip daddr 192.168.10.117/32 meta l4proto icmp accept'), ruleset.index('meta l4proto tcp reject'))
+
+    def test_allowed_http_destination_bypasses_denial_redirect(self):
+        policy = validate_policy(policy_payload(rules=[
+            {"destination": "192.168.0.170", "protocol": "tcp", "ports": {"from": 80, "to": 80}},
+            {"destination": "192.168.10.117", "protocol": "tcp", "ports": {"from": 443, "to": 443}},
+        ]))
+        ruleset, _ = compile_ruleset([policy])
+
+        bypass = 'ip daddr 192.168.0.170/32 tcp dport 80 accept'
+        redirect = f'tcp dport 80 redirect to :{DENIAL_RESPONSE_PORT}'
+        self.assertIn(bypass, ruleset)
+        self.assertIn(redirect, ruleset)
+        self.assertLess(ruleset.index(bypass), ruleset.index(redirect))
+
+    def test_ipv6_policy_does_not_redirect_http_to_ipv4_only_responder(self):
+        policy = validate_policy(policy_payload(
+            tunnel_address="2001:db8::2",
+            rules=[{"destination": "2001:db8:1::1", "protocol": "tcp", "ports": None}],
+        ))
+        ruleset, _ = compile_ruleset([policy])
+        self.assertNotIn(f'redirect to :{DENIAL_RESPONSE_PORT}', ruleset)
+        self.assertIn('reject with icmpv6 type admin-prohibited', ruleset)
 
     def test_ipv6_icmp_uses_the_ipv6_protocol_name(self):
         policy = validate_policy(policy_payload(
@@ -148,6 +177,44 @@ class NetworkPolicyProtocolTest(unittest.TestCase):
 
         with self.assertRaises(AgentProtocolError):
             AgentRequest.from_payload({"version": 1, "action": "status", "policies": []})
+
+
+class NetworkPolicyDenialResponderTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), DenialRequestHandler)
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.thread.join(timeout=2)
+
+    def request(self, path: str, headers: dict[str, str]):
+        connection = HTTPConnection("127.0.0.1", self.server.server_port, timeout=2)
+        connection.request("GET", path, headers=headers)
+        response = connection.getresponse()
+        body = response.read().decode("utf-8")
+        connection.close()
+        return response, body
+
+    def test_html_response_defaults_to_english_and_supports_chinese(self):
+        response, body = self.request("/", {"Accept": "text/html", "Accept-Language": "zh-CN"})
+        self.assertEqual(403, response.status)
+        self.assertEqual("text/html; charset=utf-8", response.getheader("Content-Type"))
+        self.assertIn("VPN 访问被拒绝", body)
+        self.assertNotIn("10.8.0.2", body)
+
+    def test_json_response_uses_accept_or_api_path(self):
+        response, body = self.request("/api/status", {"Accept": "application/json", "Accept-Language": "en"})
+        self.assertEqual(403, response.status)
+        self.assertEqual("application/json; charset=utf-8", response.getheader("Content-Type"))
+        self.assertEqual(
+            {"error": "vpn_access_denied", "message": "This VPN endpoint is not authorized to access this resource. Contact an administrator."},
+            __import__("json").loads(body),
+        )
 
 
 @unittest.skipIf(db is None, "SQLAlchemy is required for Dashboard persistence tests")

@@ -28,7 +28,7 @@ services:
     image: wgd-network-policy-integration:local
     cap_add: [NET_ADMIN]
     entrypoint: ["/tests/target-entrypoint.sh"]
-    command: ["10.250.0.0/24", "10.251.0.10", "tcp:18080", "udp:18081"]
+    command: ["10.250.0.0/24", "10.251.0.10", "http:80", "tcp:18080", "udp:18081"]
     healthcheck:
       test: ["CMD-SHELL", "test -f /tmp/target-ready"]
       interval: 2s
@@ -70,7 +70,7 @@ services:
     image: wgd-network-policy-integration:local
     cap_add: [NET_ADMIN]
     entrypoint: ["/tests/target-entrypoint.sh"]
-    command: ["10.250.0.0/24", "10.253.0.10", "tcp:19090"]
+    command: ["10.250.0.0/24", "10.253.0.10", "http:80", "tcp:19090"]
     healthcheck:
       test: ["CMD-SHELL", "test -f /tmp/target-ready"]
       interval: 2s

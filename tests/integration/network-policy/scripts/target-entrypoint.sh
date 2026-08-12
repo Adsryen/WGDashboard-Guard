@@ -10,6 +10,7 @@ for listener in "$@"; do
     protocol="${listener%%:*}"
     port="${listener#*:}"
     case "$protocol" in
+        http) python3 /tests/http-echo.py "$port" >/tmp/http-"$port".log 2>&1 & ;;
         tcp) python3 /tests/tcp-echo.py "$port" >/tmp/tcp-"$port".log 2>&1 & ;;
         udp) python3 /tests/udp-echo.py "$port" udp-ok >/tmp/udp-"$port".log 2>&1 & ;;
         *) echo "unsupported listener: $listener" >&2; exit 1 ;;

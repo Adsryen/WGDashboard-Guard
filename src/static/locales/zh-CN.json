@@ -499,7 +499,6 @@
 	"Apply reviewed changes": "应用已审核规则",
 	"Discard changes": "放弃修改",
 	"Confirm disable": "确认停用",
-	"Step 1: edit rules. Step 2: review generated rules. Step 3: apply reviewed changes.": "第 1 步：编辑规则。第 2 步：审核生成的规则。第 3 步：应用已审核的规则。",
 	"applied": "已应用",
 	"failed": "失败",
 	"apply": "应用",
@@ -513,6 +512,6 @@
 	"Add each network service this Peer may reach.": "添加此端点可以访问的每个网络服务。",
 	"Editing does not change forwarding access. Review the change, then confirm application.": "编辑不会改变转发访问权限。请先审核变更，再确认应用。",
 	"Review the generated rules below, then confirm application.": "请核对下方生成的规则，再确认应用。",
-	"Review generated rules before they are applied to the gateway.": "规则应用到网关前需要先审核生成结果。",
+	"Review the rules, then confirm before applying them to the gateway.": "请先核对规则，确认后再应用到网关。",
 	"These are the exact rules that will be applied after confirmation.": "确认后将准确应用以下规则。"
 }

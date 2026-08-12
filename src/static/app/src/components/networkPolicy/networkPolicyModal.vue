@@ -347,7 +347,7 @@ export default {
 			<section class="policy-actions border-top pt-3">
 				<div class="d-flex align-items-center gap-2 mb-2">
 					<i class="bi bi-clipboard-check text-primary"></i>
-					<div class="small text-muted"><LocaleText t="Review generated rules before they are applied to the gateway." /></div>
+					<div class="small text-muted"><LocaleText t="Review the rules, then confirm before applying them to the gateway." /></div>
 				</div>
 				<div class="d-flex flex-wrap gap-2">
 					<button type="button" class="btn btn-primary" :disabled="!canManage" @click="runPrimaryAction"><i :class="[primaryActionIcon, 'me-1']"></i><LocaleText :t="primaryActionLabel"></LocaleText></button>

@@ -11,7 +11,8 @@ export default {
 	components: {LocaleText},
 	props: {
 		selectedPeer: Object,
-		configurationName: {type: String, default: ""}
+		configurationName: {type: String, default: ""},
+		initialTunnelAddress: {type: String, default: ""}
 	},
 	emits: ["close", "changed"],
 	data(){
@@ -104,7 +105,9 @@ export default {
 		}
 	},
 	async mounted(){
-		this.tunnelAddress = this.tunnelAddresses[0] || "";
+		this.tunnelAddress = this.tunnelAddresses.includes(this.initialTunnelAddress)
+			? this.initialTunnelAddress
+			: this.tunnelAddresses[0] || "";
 		await Promise.all([this.loadCapabilities(), this.loadPolicy()]);
 	},
 	methods: {
@@ -252,8 +255,9 @@ export default {
 </script>
 
 <template>
-	<div class="peerSettingContainer w-100 h-100 position-absolute top-0 start-0 overflow-y-scroll">
-		<div class="dashboardModal bg-body shadow mx-auto my-4 p-4 p-md-4">
+	<Teleport to="body">
+	<div class="network-policy-overlay">
+		<div class="dashboardModal network-policy-workbench bg-body shadow p-4 p-md-4">
 			<div class="d-flex align-items-start gap-3 mb-3">
 				<div class="policy-heading">
 					<div class="policy-heading-icon"><i class="bi bi-shield-lock"></i></div>
@@ -377,10 +381,12 @@ export default {
 			</div>
 		</div>
 	</div>
+	</Teleport>
 </template>
 
 <style scoped>
-.dashboardModal { max-width: 920px; }
+.network-policy-overlay { position: fixed !important; inset: 0; z-index: 9999; overflow-y: auto; padding: 1rem; background-color: #00000060; backdrop-filter: blur(1px); -webkit-backdrop-filter: blur(1px); }
+.network-policy-workbench { width: min(920px, 100%); min-height: 0; margin: 0 auto; }
 .policy-heading { display: flex; align-items: center; gap: 0.75rem; }
 .policy-heading-icon { display: grid; place-items: center; width: 2.4rem; height: 2.4rem; border: 1px solid var(--bs-primary-border-subtle); border-radius: 6px; color: var(--bs-primary); background: var(--bs-primary-bg-subtle); }
 .policy-context { display: grid; grid-template-columns: minmax(150px, 1.25fr) repeat(3, minmax(120px, 1fr)); border: 1px solid var(--bs-border-color); border-radius: 6px; overflow: hidden; }
@@ -394,6 +400,6 @@ export default {
 .empty-rules { margin-top: 0.75rem; padding: 0.7rem 0.8rem; border-left: 3px solid var(--bs-warning); background: var(--bs-warning-bg-subtle); color: var(--bs-warning-text-emphasis); font-size: 0.85rem; }
 .preview-panel { padding: 0.85rem; border: 1px solid var(--bs-info-border-subtle); border-radius: 6px; background: var(--bs-info-bg-subtle); }
 .ruleset-preview { max-height: 260px; overflow: auto; padding: 0.75rem; border: 1px solid var(--bs-border-color); background: var(--bs-tertiary-bg); font-size: 0.75rem; white-space: pre-wrap; }
-@media (max-width: 768px) { .policy-context { grid-template-columns: 1fr 1fr; } .policy-context-item:nth-child(3) { border-left: 0; border-top: 1px solid var(--bs-border-color); } .policy-context-item:nth-child(4) { border-top: 1px solid var(--bs-border-color); } }
-@media (max-width: 460px) { .policy-context { grid-template-columns: 1fr; } .policy-context-item { border-left: 0; border-top: 1px solid var(--bs-border-color); } .policy-context-item:first-child { border-top: 0; } }
+@media (max-width: 768px) { .network-policy-overlay { padding: 0.5rem; } .policy-context { grid-template-columns: 1fr 1fr; } .policy-context-item:nth-child(3) { border-left: 0; border-top: 1px solid var(--bs-border-color); } .policy-context-item:nth-child(4) { border-top: 1px solid var(--bs-border-color); } }
+@media (max-width: 460px) { .network-policy-overlay { padding: 0; } .network-policy-workbench { min-height: 100%; } .policy-context { grid-template-columns: 1fr; } .policy-context-item { border-left: 0; border-top: 1px solid var(--bs-border-color); } .policy-context-item:first-child { border-top: 0; } }
 </style>

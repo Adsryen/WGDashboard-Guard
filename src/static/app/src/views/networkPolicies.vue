@@ -12,6 +12,7 @@ const rows = ref([]);
 const runtime = ref({status: "not_applicable"});
 const selectedPeer = ref(null);
 const selectedConfiguration = ref("");
+const selectedTunnelAddress = ref("");
 const policyModalOpen = ref(false);
 const statusFilter = ref("all");
 const configurationFilter = ref("all");
@@ -85,6 +86,7 @@ const openPolicy = (row) => {
 	if (!canOpenPolicy(row)) return;
 	selectedPeer.value = {id: row.peer_public_key, name: row.peer_name, allowed_ip: row.allowed_ip};
 	selectedConfiguration.value = row.configuration_name;
+	selectedTunnelAddress.value = row.tunnel_address;
 	policyModalOpen.value = true;
 };
 const closePolicy = async () => {
@@ -186,7 +188,7 @@ const closePolicy = async () => {
 	</div>
 
 	<Transition name="zoom">
-		<NetworkPolicyModal v-if="policyModalOpen && selectedPeer" :selectedPeer="selectedPeer" :configurationName="selectedConfiguration" @changed="loadOverview" @close="closePolicy" />
+		<NetworkPolicyModal v-if="policyModalOpen && selectedPeer" :selectedPeer="selectedPeer" :configurationName="selectedConfiguration" :initialTunnelAddress="selectedTunnelAddress" @changed="loadOverview" @close="closePolicy" />
 	</Transition>
 </template>
 

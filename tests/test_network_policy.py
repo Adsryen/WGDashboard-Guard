@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pathlib
+import json
 import re
 import sys
 import tempfile
@@ -28,6 +29,22 @@ from network_policy.validation import PolicyValidationError, validate_policy
 
 
 PUBLIC_KEY = "a" * 43 + "="
+NETWORK_POLICY_LOCALE_DYNAMIC_KEYS = {
+    "Applied",
+    "Apply only after reviewing the generated rules.",
+    "Apply reviewed changes",
+    "Changes not applied",
+	"Disabled",
+    "Forwarded access control disabled",
+    "Forwarded access control enabled",
+    "Forwarding access control is off. This Peer keeps the gateway's existing forwarding behavior.",
+    "Loading policy state",
+    "Not configured",
+    "Only the destinations below are allowed. All other forwarded traffic from this Peer is denied after application.",
+    "Preview ready - confirm to apply",
+    "Review changes",
+    "Review changes to generate the exact nftables rules.",
+}
 
 
 def policy_payload(**overrides):
@@ -86,6 +103,25 @@ class NetworkPolicyValidationTest(unittest.TestCase):
                 "protocol": "icmp",
                 "ports": {"from": 8, "to": 8},
             }]))
+
+
+class NetworkPolicyLocaleTest(unittest.TestCase):
+    def test_chinese_translates_every_network_policy_ui_key(self):
+        root = pathlib.Path(__file__).resolve().parents[1]
+        source = (root / "src/static/app/src/components/networkPolicy/networkPolicyModal.vue").read_text(encoding="utf-8")
+        locale = json.loads((root / "src/static/locales/zh-CN.json").read_text(encoding="utf-8"))
+        template = json.loads((root / "src/static/locales/locale_template.json").read_text(encoding="utf-8"))
+        keys = {match[1] for match in re.findall(r"<LocaleText\s+t=([\"'])(.*?)\1", source)}
+        keys.update(match[1] for match in re.findall(r"GetLocale\(([\"'])(.*?)\1\)", source))
+        keys.update(NETWORK_POLICY_LOCALE_DYNAMIC_KEYS)
+
+        self.assertGreater(len(keys), len(NETWORK_POLICY_LOCALE_DYNAMIC_KEYS))
+
+        missing_template = sorted(key for key in keys if key not in template)
+        missing_chinese = sorted(key for key in keys if not locale.get(key, "").strip())
+
+        self.assertEqual([], missing_template, f"Missing locale template keys: {missing_template}")
+        self.assertEqual([], missing_chinese, f"Missing zh-CN translations: {missing_chinese}")
 
 
 class NetworkPolicyCompilerTest(unittest.TestCase):

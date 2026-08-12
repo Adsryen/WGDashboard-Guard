@@ -3,6 +3,9 @@ export const GetLocale = (key) => {
 	const store = DashboardConfigurationStore()
 	if (store.Locale === null)
 		return key
+	if (Object.prototype.hasOwnProperty.call(store.Locale, key) && store.Locale[key].length > 0){
+		return store.Locale[key]
+	}
 	const reg = Object.keys(store.Locale)
 	const match = reg.filter(x => {
 		return key.match(new RegExp('^' + x + '$', 'gi')) !== null

@@ -539,4 +539,7 @@
 	,"Select a single-host tunnel address first.": ""
 	,"This Peer needs a single-host Allowed IP before a forwarding policy can be managed.": ""
 	,"No ports for ICMP": ""
+	,"Leave the end port empty to allow one port.": ""
+	,"Enter a port from 1 to 65535.": ""
+	,"The end port must be between the start port and 65535.": ""
 }

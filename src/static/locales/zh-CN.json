@@ -542,6 +542,9 @@
 	"Select a single-host tunnel address first.": "请先选择单个主机的隧道地址。",
 	"This Peer needs a single-host Allowed IP before a forwarding policy can be managed.": "该端点需要配置单个主机的允许 IP 地址，才能管理转发策略。",
 	"No ports for ICMP": "ICMP 无端口",
+	"Leave the end port empty to allow one port.": "结束端口留空时，将仅允许起始端口。",
+	"Enter a port from 1 to 65535.": "请输入 1 至 65535 之间的端口。",
+	"The end port must be between the start port and 65535.": "结束端口必须不小于起始端口，且不大于 65535。",
 	"Actions": "操作",
 	"Loading...": "加载中..."
 }

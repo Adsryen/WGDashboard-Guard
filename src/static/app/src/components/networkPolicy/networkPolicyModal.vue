@@ -357,18 +357,6 @@ export default {
 				</div>
 			</div>
 
-			<section class="policy-section policy-switch-section mb-3">
-				<div class="d-flex align-items-start gap-3">
-					<div class="form-check form-switch m-0 pt-1">
-						<input class="form-check-input" id="network-policy-managed" type="checkbox" v-model="policy.managed" :disabled="!canManage" @change="onManagedChange">
-					</div>
-					<div>
-						<label class="form-check-label fw-semibold" for="network-policy-managed"><LocaleText t="Enable forwarded access control" /></label>
-						<div class="small text-muted"><LocaleText :t="policyModeDescription" /></div>
-					</div>
-				</div>
-			</section>
-			<div class="policy-overview-note"><i class="bi bi-info-circle"></i><span><LocaleText t="Each configured destination also permits ICMP diagnostics for that destination." /></span></div>
 			<section class="policy-tab-actions policy-overview-actions">
 				<div v-if="hasPersistedPolicy && policy.managed" class="d-flex flex-wrap justify-content-end gap-2 ms-auto">
 					<button v-if="!disableConfirmation" type="button" class="btn btn-outline-danger" :disabled="!canManage" @click="requestDeactivate"><i class="bi bi-shield-x me-1"></i><LocaleText t="Disable policy"></LocaleText></button>
@@ -379,6 +367,18 @@ export default {
 			</div>
 
 			<div v-if="activeTab === 'rules'" class="policy-tab-panel" role="tabpanel">
+			<section class="policy-section policy-switch-section mb-3">
+				<div class="d-flex align-items-start gap-3">
+					<div class="form-check form-switch m-0 pt-1">
+						<input class="form-check-input" id="network-policy-managed" type="checkbox" v-model="policy.managed" :disabled="!canManage" @change="onManagedChange">
+					</div>
+					<div>
+						<label class="form-check-label fw-semibold" for="network-policy-managed"><LocaleText t="Enable forwarded access control" /></label>
+						<div class="small text-muted"><LocaleText :t="policyModeDescription" /></div>
+					</div>
+				</div>
+				<div class="policy-overview-note mt-3"><i class="bi bi-info-circle"></i><span><LocaleText t="Each configured destination also permits ICMP diagnostics for that destination." /></span></div>
+			</section>
 			<section class="policy-section policy-rules-section mb-3" :class="{'policy-section-disabled': !policy.managed}">
 				<div class="d-flex align-items-center gap-2 mb-1">
 					<div>

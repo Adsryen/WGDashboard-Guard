@@ -32,6 +32,9 @@ export default {
 		}
 	},
 	computed: {
+		modalTheme(){
+			return this.store.Configuration?.Server?.dashboard_theme || "dark";
+		},
 		tunnelAddresses(){
 			const explicitAddresses = Array.isArray(this.target.tunnelAddresses)
 				? this.target.tunnelAddresses
@@ -255,7 +258,7 @@ export default {
 
 <template>
 	<Teleport to="body">
-		<div class="network-policy-overlay">
+		<div class="network-policy-overlay" :data-bs-theme="modalTheme">
 			<div class="dashboardModal network-policy-workbench bg-body shadow p-4 p-md-4">
 				<header class="policy-header">
 					<div class="policy-heading">

@@ -197,7 +197,6 @@ class NetworkPolicyService:
             peer_public_key=policy.peer_public_key,
             tunnel_address=policy.tunnel_address,
             managed=False,
-            icmp_restricted=policy.icmp_restricted,
             rules=(),
         )
         return self.apply(disabled.to_payload(), actor, action="deactivate")
@@ -225,7 +224,6 @@ class NetworkPolicyService:
                 peer_public_key=policy.peer_public_key,
                 tunnel_address=policy.tunnel_address,
                 managed=True,
-                icmp_restricted=policy.icmp_restricted,
                 rules=(),
             )
             candidate = self.repository.create_candidate(suspended, actor, action="suspend")

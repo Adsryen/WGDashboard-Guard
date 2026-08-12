@@ -482,8 +482,8 @@
 	"Hide rule snapshot": "",
 	"Forwarded access control enabled": "",
 	"Forwarded access control disabled": "",
-	"ICMP diagnostics restricted": "",
-	"ICMP diagnostics allowed by default": "",
+	"ICMP follows configured destinations": "",
+	"ICMP diagnostics are allowed for every configured destination.": "",
 	"No explicit destination rules": "",
 	"Restore this revision": "",
 	"This Peer needs a single-host Allowed IP before a forwarding policy can be managed\\.": "",
@@ -531,11 +531,5 @@
 	,"Preview the generated rules before applying this policy.": ""
 	,"Select a single-host tunnel address first.": ""
 	,"This Peer needs a single-host Allowed IP before a forwarding policy can be managed.": ""
-	,"Restrict ICMP diagnostics": ""
-	,"ICMP diagnostics are allowed to all destinations by default.": ""
-	,"ICMP is allowed only for destinations with an ICMP rule below.": ""
 	,"No ports for ICMP": ""
-	,"ICMP diagnostics remain allowed to all destinations.": ""
-	,"No TCP or UDP destination is allowed. ICMP diagnostics remain allowed to all destinations.": ""
-	,"All other TCP and UDP forwarded traffic from this Peer will be denied after application.": ""
 }

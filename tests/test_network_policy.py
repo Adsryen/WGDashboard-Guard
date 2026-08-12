@@ -96,23 +96,26 @@ class NetworkPolicyCompilerTest(unittest.TestCase):
             ruleset,
         )
         self.assertIn('tcp dport 8118 accept', ruleset)
-        self.assertIn('meta l4proto icmp accept', ruleset)
+        self.assertIn('ip daddr 192.168.0.170/32 meta l4proto icmp accept', ruleset)
+        self.assertIn('ip daddr 192.168.10.117/32 meta l4proto icmp accept', ruleset)
+        self.assertNotIn('ip saddr 10.8.0.2 meta l4proto icmp accept', ruleset)
         self.assertLess(ruleset.index('tcp dport 8118 accept'), ruleset.index('counter drop'))
         self.assertIn(f'wgd-policy:{digest}', ruleset)
         self.assertNotIn("input", ruleset)
         self.assertNotIn("dport 22", ruleset)
 
-    def test_icmp_is_allowed_by_default_and_can_be_restricted(self):
-        unrestricted = validate_policy(policy_payload())
-        unrestricted_ruleset, _ = compile_ruleset([unrestricted])
-        self.assertIn('meta l4proto icmp accept', unrestricted_ruleset)
+    def test_icmp_is_allowed_only_for_configured_destinations(self):
+        policy = validate_policy(policy_payload(rules=[
+            {"destination": "192.168.0.170", "protocol": "tcp", "ports": None},
+            {"destination": "192.168.0.170", "protocol": "udp", "ports": None},
+            {"destination": "192.168.10.117", "protocol": "icmp", "ports": None},
+        ]))
+        ruleset, _ = compile_ruleset([policy])
 
-        restricted = validate_policy(policy_payload(
-            icmp_restricted=True,
-            rules=[{"destination": "192.168.0.170", "protocol": "icmp", "ports": None}],
-        ))
-        restricted_ruleset, _ = compile_ruleset([restricted])
-        self.assertEqual(1, restricted_ruleset.count('meta l4proto icmp accept'))
+        self.assertEqual(2, ruleset.count('meta l4proto icmp accept'))
+        self.assertIn('ip daddr 192.168.0.170/32 meta l4proto icmp accept', ruleset)
+        self.assertIn('ip daddr 192.168.10.117/32 meta l4proto icmp accept', ruleset)
+        self.assertLess(ruleset.index('ip daddr 192.168.10.117/32 meta l4proto icmp accept'), ruleset.index('counter drop'))
 
     def test_ipv6_icmp_uses_the_ipv6_protocol_name(self):
         policy = validate_policy(policy_payload(

@@ -79,17 +79,21 @@ def compile_ruleset(policies: Iterable[NetworkPolicy], table_name: str = TABLE_N
     for policy in canonical_policy_payload(policies):
         validated = NetworkPolicy.from_payload(policy)
         for rule in sorted(validated.rules, key=_rule_sort_key):
+            if rule.protocol == "icmp":
+                continue
             lines.append(
                 f"add rule {TABLE_FAMILY} {table_name} {CHAIN_NAME} "
                 f"{_rule_expression(validated, rule)} accept comment \"wgd-policy:{digest}\""
             )
         family = _address_family(validated.tunnel_address)
-        if not validated.icmp_restricted:
-            protocol = "icmp" if family == "ip" else "ipv6-icmp"
+        protocol = "icmp" if family == "ip" else "ipv6-icmp"
+        destinations = sorted({rule.destination for rule in validated.rules})
+        for destination in destinations:
             lines.append(
                 f"add rule {TABLE_FAMILY} {table_name} {CHAIN_NAME} "
                 f'iifname "{validated.interface_name}" {family} saddr {validated.tunnel_address} '
-                f"meta l4proto {protocol} accept comment \"wgd-policy:{digest}\""
+                f"{family} daddr {destination} meta l4proto {protocol} accept "
+                f"comment \"wgd-policy:{digest}\""
             )
         lines.append(
             f"add rule {TABLE_FAMILY} {table_name} {CHAIN_NAME} "

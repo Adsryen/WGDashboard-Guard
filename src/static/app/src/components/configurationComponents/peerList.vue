@@ -505,6 +505,8 @@ watch(() => route.query.peer || route.query.id, (newValue) => {
 			key="NetworkPolicyModal"
 			v-if="configurationModals.networkPolicy.modalOpen"
 			:selectedPeer="configurationModalSelectedPeer"
+			:configurationName="configurationInfo.Name"
+			@changed="fetchPeerList"
 			@close="configurationModals.networkPolicy.modalOpen = false"
 		></NetworkPolicyModal>
 	</TransitionGroup>

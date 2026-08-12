@@ -504,5 +504,15 @@
 	"failed": "失败",
 	"apply": "应用",
 	"deactivate": "停用",
-	"rollback": "回滚"
+	"rollback": "回滚",
+	"Network access policy": "网络访问策略",
+	"Control this Peer's forwarded access without changing gateway services.": "控制此端点的转发访问权限，不会改动网关服务。",
+	"Only the destinations below are allowed. All other forwarded traffic from this Peer is denied after application.": "仅允许访问下方目标。应用后，此端点的其他转发流量都会被拒绝。",
+	"Forwarding access control is off. This Peer keeps the gateway's existing forwarding behavior.": "转发访问控制已关闭。此端点保持网关现有的转发行为。",
+	"Enable forwarded access control": "启用转发访问控制",
+	"Add each network service this Peer may reach.": "添加此端点可以访问的每个网络服务。",
+	"Editing does not change forwarding access. Review the change, then confirm application.": "编辑不会改变转发访问权限。请先审核变更，再确认应用。",
+	"Review the generated rules below, then confirm application.": "请核对下方生成的规则，再确认应用。",
+	"Review generated rules before they are applied to the gateway.": "规则应用到网关前需要先审核生成结果。",
+	"These are the exact rules that will be applied after confirmation.": "确认后将准确应用以下规则。"
 }

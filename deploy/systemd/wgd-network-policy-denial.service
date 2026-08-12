@@ -7,7 +7,8 @@ Requires=wgd-network-policy-agent.service
 
 [Service]
 Type=simple
-DynamicUser=yes
+User=root
+Group=root
 WorkingDirectory=/opt/WGDashboard/src
 Environment=PYTHONPATH=/opt/WGDashboard/src
 ExecStart=/usr/bin/python3 -m network_policy.denial_responder --host 0.0.0.0 --port 61573

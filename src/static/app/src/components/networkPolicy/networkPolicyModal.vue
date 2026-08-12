@@ -26,6 +26,7 @@ export default {
 			previewRequired: true,
 			hasPersistedPolicy: false,
 			persistedSignature: "",
+			disableConfirmation: false,
 			loading: true,
 			applying: false,
 			error: ""
@@ -39,8 +40,14 @@ export default {
 				.filter(value => /\/(32|128)$/.test(value))
 				.map(value => value.replace(/\/(32|128)$/, ""))
 		},
-		canApply(){
-			return this.capabilities?.capabilities?.supported === true && !this.previewRequired && !this.applying
+		canManage(){
+			return this.capabilities?.capabilities?.supported === true && !this.loading && !this.applying
+		},
+		primaryActionLabel(){
+			return this.previewRequired ? "Review changes" : "Apply reviewed changes"
+		},
+		primaryActionIcon(){
+			return this.previewRequired ? "bi bi-eye" : "bi bi-shield-check"
 		},
 		policySignature(){
 			return JSON.stringify(this.policy)
@@ -70,6 +77,7 @@ export default {
 					this.previewRequired = true
 					this.previewRuleset = ""
 					this.previewHash = ""
+					this.disableConfirmation = false
 				}
 			}
 		},
@@ -157,6 +165,13 @@ export default {
 				}
 			});
 		},
+		async runPrimaryAction(){
+			if (this.previewRequired){
+				await this.preview()
+			}else{
+				await this.apply()
+			}
+		},
 		async apply(){
 			if (this.previewRequired){
 				this.error = GetLocale("Preview the generated rules before applying this policy.");
@@ -169,6 +184,7 @@ export default {
 					this.store.newMessage("WGDashboard", GetLocale("Network policy applied"), "success");
 					this.previewRequired = true;
 					this.previewRuleset = "";
+					this.disableConfirmation = false;
 					this.loadPolicy();
 					this.$emit("changed");
 				}else{
@@ -177,6 +193,16 @@ export default {
 				this.applying = false;
 			});
 		},
+		resetChanges(){
+			this.policy = this.hasPersistedPolicy ? JSON.parse(this.persistedSignature) : emptyPolicy();
+			this.previewRequired = true;
+			this.previewRuleset = "";
+			this.previewHash = "";
+			this.disableConfirmation = false;
+		},
+		requestDeactivate(){
+			this.disableConfirmation = !this.disableConfirmation;
+		},
 		async deactivate(){
 			this.applying = true;
 			await fetchPost("/api/networkPolicy/deactivate", this.basePayload(), (res) => {
@@ -184,6 +210,7 @@ export default {
 					this.store.newMessage("WGDashboard", GetLocale("Network policy disabled"), "success");
 					this.policy = emptyPolicy();
 					this.previewRuleset = "";
+					this.disableConfirmation = false;
 					this.loadPolicy();
 					this.$emit("changed");
 				}else{
@@ -275,10 +302,17 @@ export default {
 				<div v-if="policy.rules.length === 0" class="small text-warning py-2"><LocaleText t="No destination is allowed. Applying this policy denies all forwarded traffic for this Peer."></LocaleText></div>
 			</div>
 
-			<div class="d-flex gap-2 border-top mt-4 pt-3">
-				<button type="button" class="btn btn-outline-primary" :disabled="loading || applying" @click="preview"><i class="bi bi-eye me-1"></i><LocaleText t="Preview changes"></LocaleText></button>
-				<button type="button" class="btn btn-primary" :disabled="!canApply" @click="apply"><i class="bi bi-shield-check me-1"></i><LocaleText t="Confirm apply"></LocaleText></button>
-				<button v-if="hasPersistedPolicy && policy.managed" type="button" class="btn btn-outline-danger ms-auto" :disabled="loading || applying" @click="deactivate"><i class="bi bi-shield-x me-1"></i><LocaleText t="Disable policy"></LocaleText></button>
+			<div class="policy-actions border-top mt-4 pt-3">
+				<div class="small text-muted mb-2"><LocaleText t="Step 1: edit rules. Step 2: review generated rules. Step 3: apply reviewed changes." /></div>
+				<div class="d-flex flex-wrap gap-2">
+					<button type="button" class="btn btn-primary" :disabled="!canManage" @click="runPrimaryAction"><i :class="[primaryActionIcon, 'me-1']"></i><LocaleText :t="primaryActionLabel"></LocaleText></button>
+					<button v-if="hasUnappliedChanges || previewRuleset" type="button" class="btn btn-outline-secondary" :disabled="applying" @click="resetChanges"><i class="bi bi-arrow-counterclockwise me-1"></i><LocaleText t="Discard changes"></LocaleText></button>
+					<div v-if="hasPersistedPolicy && policy.managed" class="ms-sm-auto d-flex gap-2">
+						<button v-if="!disableConfirmation" type="button" class="btn btn-outline-danger" :disabled="!canManage" @click="requestDeactivate"><i class="bi bi-shield-x me-1"></i><LocaleText t="Disable policy"></LocaleText></button>
+						<button v-else type="button" class="btn btn-danger" :disabled="!canManage" @click="deactivate"><i class="bi bi-exclamation-octagon me-1"></i><LocaleText t="Confirm disable"></LocaleText></button>
+						<button v-if="disableConfirmation" type="button" class="btn btn-outline-secondary" :disabled="applying" @click="requestDeactivate"><LocaleText t="Cancel"></LocaleText></button>
+					</div>
+				</div>
 			</div>
 
 			<div v-if="previewRuleset" class="mt-3">

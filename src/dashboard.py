@@ -1919,7 +1919,10 @@ Index Page
 
 @app.get(f'{APP_PREFIX}/')
 def index():
-    return render_template('index.html', APP_PREFIX=APP_PREFIX)
+    # The HTML selects hashed Vite assets, so it must not outlive a deployment.
+    response = Flask.make_response(app, render_template('index.html', APP_PREFIX=APP_PREFIX))
+    response.headers['Cache-Control'] = 'no-store, max-age=0'
+    return response
 
 if __name__ == "__main__":
     startThreads()

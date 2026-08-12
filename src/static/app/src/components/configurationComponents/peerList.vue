@@ -29,6 +29,7 @@ const wireguardConfigurationStore = WireguardConfigurationsStore()
 const route = useRoute()
 const configurationInfo = ref({})
 const configurationPeers = ref([])
+const highlightedPeerId = ref("")
 const configurationToggling = ref(false)
 const configurationModalSelectedPeer = ref({})
 const configurationModals = ref({
@@ -182,6 +183,10 @@ const firstAllowedIPCount = (allowed_ip) => {
 }
 
 const searchPeers = computed(() => {
+	if (highlightedPeerId.value){
+		return configurationPeers.value.filter(peer => peer.id === highlightedPeerId.value)
+	}
+
 	const result = wireguardConfigurationStore.searchString ?
 		configurationPeers.value.filter(x => {
 			return (x.name.includes(wireguardConfigurationStore.searchString) ||
@@ -241,9 +246,10 @@ const searchPeers = computed(() => {
 	return re
 })
 
-watch(() => route.query.id, (newValue) => {
-	if (newValue){
-		wireguardConfigurationStore.searchString = newValue
+watch(() => route.query.peer || route.query.id, (newValue) => {
+	highlightedPeerId.value = typeof newValue === "string" ? newValue : ""
+	if (highlightedPeerId.value){
+		wireguardConfigurationStore.searchString = highlightedPeerId.value
 	}else{
 		wireguardConfigurationStore.searchString = undefined
 	}

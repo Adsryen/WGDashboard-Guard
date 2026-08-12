@@ -522,6 +522,7 @@
 	"Disable policy": "",
 	"Confirm disable": "",
 	"Review the rules, then confirm before applying them to the gateway.": "",
+	"Apply only after reviewing the generated rules.": "",
 	"These are the exact rules that will be applied after confirmation.": ""
 	,"Peer public key": ""
 	,"Copy": ""

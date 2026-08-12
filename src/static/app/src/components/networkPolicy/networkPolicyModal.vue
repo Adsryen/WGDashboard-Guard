@@ -360,7 +360,7 @@ export default {
 			<section class="policy-section policy-switch-section mb-3">
 				<div class="d-flex align-items-start gap-3">
 					<div class="form-check form-switch m-0 pt-1">
-						<input class="form-check-input" id="network-policy-managed" type="checkbox" v-model="policy.managed" @change="onManagedChange">
+						<input class="form-check-input" id="network-policy-managed" type="checkbox" v-model="policy.managed" :disabled="!canManage" @change="onManagedChange">
 					</div>
 					<div>
 						<label class="form-check-label fw-semibold" for="network-policy-managed"><LocaleText t="Enable forwarded access control" /></label>
@@ -369,6 +369,13 @@ export default {
 				</div>
 			</section>
 			<div class="policy-overview-note"><i class="bi bi-info-circle"></i><span><LocaleText t="Each configured destination also permits ICMP diagnostics for that destination." /></span></div>
+			<section class="policy-tab-actions policy-overview-actions">
+				<div v-if="hasPersistedPolicy && policy.managed" class="d-flex flex-wrap justify-content-end gap-2 ms-auto">
+					<button v-if="!disableConfirmation" type="button" class="btn btn-outline-danger" :disabled="!canManage" @click="requestDeactivate"><i class="bi bi-shield-x me-1"></i><LocaleText t="Disable policy"></LocaleText></button>
+					<button v-else type="button" class="btn btn-danger" :disabled="!canManage" @click="deactivate"><i class="bi bi-exclamation-octagon me-1"></i><LocaleText t="Confirm disable"></LocaleText></button>
+					<button v-if="disableConfirmation" type="button" class="btn btn-outline-secondary" :disabled="applying" @click="requestDeactivate"><LocaleText t="Cancel"></LocaleText></button>
+				</div>
+			</section>
 			</div>
 
 			<div v-if="activeTab === 'rules'" class="policy-tab-panel" role="tabpanel">
@@ -408,23 +415,14 @@ export default {
 				<div v-else-if="policy.rules.length === 0" class="empty-rules"><i class="bi bi-exclamation-triangle me-2"></i><LocaleText t="No destination is allowed. Applying this policy denies all forwarded traffic for this Peer." /></div>
 				<div v-else class="small text-muted mt-2"><i class="bi bi-activity me-1"></i><LocaleText t="ICMP diagnostics are allowed for every configured destination." /></div>
 			</section>
-			</div>
-
-			<section class="policy-actions">
-				<div class="d-flex align-items-center gap-2 mb-2">
-					<i class="bi bi-clipboard-check text-primary"></i>
-					<div class="small text-muted"><LocaleText t="Review the rules, then confirm before applying them to the gateway." /></div>
-				</div>
-				<div class="d-flex flex-wrap gap-2">
+			<section class="policy-tab-actions policy-rules-actions">
+				<div class="small text-muted"><i class="bi bi-clipboard-check text-primary me-1"></i><LocaleText t="Review the rules, then confirm before applying them to the gateway." /></div>
+				<div class="d-flex flex-wrap gap-2 ms-auto">
 					<button type="button" class="btn btn-primary" :disabled="!canManage || !canReview" @click="runPrimaryAction"><i :class="[primaryActionIcon, 'me-1']"></i><LocaleText :t="primaryActionLabel"></LocaleText></button>
 					<button v-if="hasUnappliedChanges || previewRuleset" type="button" class="btn btn-outline-secondary" :disabled="applying" @click="resetChanges"><i class="bi bi-arrow-counterclockwise me-1"></i><LocaleText t="Discard changes"></LocaleText></button>
-					<div v-if="hasPersistedPolicy && policy.managed" class="ms-sm-auto d-flex gap-2">
-						<button v-if="!disableConfirmation" type="button" class="btn btn-outline-danger" :disabled="!canManage" @click="requestDeactivate"><i class="bi bi-shield-x me-1"></i><LocaleText t="Disable policy"></LocaleText></button>
-						<button v-else type="button" class="btn btn-danger" :disabled="!canManage" @click="deactivate"><i class="bi bi-exclamation-octagon me-1"></i><LocaleText t="Confirm disable"></LocaleText></button>
-						<button v-if="disableConfirmation" type="button" class="btn btn-outline-secondary" :disabled="applying" @click="requestDeactivate"><LocaleText t="Cancel"></LocaleText></button>
-					</div>
 				</div>
 			</section>
+			</div>
 
 			<div v-if="activeTab === 'review'" class="policy-tab-panel" role="tabpanel">
 			<div v-if="previewRuleset" class="preview-panel mb-3">
@@ -444,6 +442,14 @@ export default {
 			</div>
 
 			<div v-else class="empty-rules empty-rules-muted"><i class="bi bi-clipboard2 me-2"></i><LocaleText t="Review changes to generate the exact nftables rules." /></div>
+
+			<section class="policy-tab-actions policy-review-actions">
+				<div class="small text-muted"><i :class="[previewRuleset ? 'bi bi-shield-check' : 'bi bi-clipboard-check', 'text-primary me-1']"></i><LocaleText :t="previewRuleset ? 'Apply only after reviewing the generated rules.' : 'Review changes to generate the exact nftables rules.'" /></div>
+				<div v-if="previewRuleset" class="d-flex flex-wrap gap-2 ms-auto">
+					<button type="button" class="btn btn-primary" :disabled="!canManage || previewRequired" @click="runPrimaryAction"><i class="bi bi-shield-check me-1"></i><LocaleText t="Apply reviewed changes"></LocaleText></button>
+					<button type="button" class="btn btn-outline-secondary" :disabled="applying" @click="resetChanges"><i class="bi bi-arrow-counterclockwise me-1"></i><LocaleText t="Discard changes"></LocaleText></button>
+				</div>
+			</section>
 
 			<div v-if="revisions.length" class="policy-history" :class="{'mt-4': previewRuleset}">
 				<h6><LocaleText t="Policy history"></LocaleText></h6>
@@ -504,6 +510,9 @@ export default {
 .policy-tab:hover { color: var(--bs-emphasis-color); background: var(--bs-secondary-bg); }
 .policy-tab.active { color: var(--bs-primary); border-color: var(--bs-primary-border-subtle); background: var(--bs-body-bg); box-shadow: 0 1px 2px rgb(0 0 0 / 8%); }
 .policy-tab:focus-visible { outline: 2px solid var(--bs-primary); outline-offset: 1px; }
+.policy-tab-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-top: 1rem; }
+.policy-overview-actions { justify-content: flex-end; }
+.policy-rules-actions, .policy-review-actions { padding-top: 1rem; border-top: 1px solid var(--bs-border-color); }
 .policy-overview-note { display: flex; align-items: flex-start; gap: 0.55rem; padding: 0.8rem 0.9rem; color: var(--bs-secondary-color); border-left: 3px solid var(--bs-primary); background: var(--bs-primary-bg-subtle); font-size: 0.84rem; }
 .policy-overview-note > i { color: var(--bs-primary); }
 .policy-notice { display: flex; align-items: flex-start; gap: 0.55rem; margin-bottom: 1rem; padding: 0.7rem 0.85rem; border: 1px solid; border-radius: 7px; font-size: 0.85rem; }

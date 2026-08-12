@@ -526,6 +526,7 @@
 	"Editing does not change forwarding access. Review the change, then confirm application.": "编辑不会改变转发访问权限。请先审核变更，再确认应用。",
 	"Review the generated rules below, then confirm application.": "请核对下方生成的规则，再确认应用。",
 	"Review the rules, then confirm before applying them to the gateway.": "请先核对规则，确认后再应用到网关。",
+	"Apply only after reviewing the generated rules.": "请在核对生成的规则后再应用。",
 	"These are the exact rules that will be applied after confirmation.": "确认后将准确应用以下规则。",
 	"Peer public key": "端点公钥",
 	"Copy": "复制",

@@ -54,3 +54,7 @@ coverage
 
 *.tsbuildinfo
 .vite/*
+
+# Local Trellis workflow state and generated frontend release files.
+.trellis/
+src/static/dist/WGDashboardAdmin/

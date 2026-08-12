@@ -1,0 +1,133 @@
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      additional_contexts:
+        network_policy_source: ../../../src/network_policy
+    image: wgd-network-policy-integration:local
+    privileged: true
+    entrypoint: ["/tests/gateway-entrypoint.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "/tests/gateway-healthcheck.sh"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 2s
+    networks:
+      peer_net:
+        ipv4_address: 10.250.0.10
+      target_a_net:
+        ipv4_address: 10.251.0.10
+      target_b_net:
+        ipv4_address: 10.252.0.10
+      target_d_net:
+        ipv4_address: 10.253.0.10
+
+  target-a:
+    image: wgd-network-policy-integration:local
+    cap_add: [NET_ADMIN]
+    entrypoint: ["/tests/target-entrypoint.sh"]
+    command: ["10.250.0.0/24", "10.251.0.10", "tcp:18080", "udp:18081"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/target-ready"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+    networks:
+      target_a_net:
+        ipv4_address: 10.251.0.170
+
+  target-b:
+    image: wgd-network-policy-integration:local
+    cap_add: [NET_ADMIN]
+    entrypoint: ["/tests/target-entrypoint.sh"]
+    command: ["10.250.0.0/24", "10.252.0.10", "tcp:18180", "udp:18181"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/target-ready"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+    networks:
+      target_b_net:
+        ipv4_address: 10.252.0.127
+
+  target-c:
+    image: wgd-network-policy-integration:local
+    cap_add: [NET_ADMIN]
+    entrypoint: ["/tests/target-entrypoint.sh"]
+    command: ["10.250.0.0/24", "10.252.0.10", "tcp:8118", "tcp:9090", "udp:8118"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/target-ready"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+    networks:
+      target_b_net:
+        ipv4_address: 10.252.0.117
+
+  target-denied:
+    image: wgd-network-policy-integration:local
+    cap_add: [NET_ADMIN]
+    entrypoint: ["/tests/target-entrypoint.sh"]
+    command: ["10.250.0.0/24", "10.253.0.10", "tcp:19090"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/target-ready"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+    networks:
+      target_d_net:
+        ipv4_address: 10.253.0.200
+
+  managed-peer:
+    image: wgd-network-policy-integration:local
+    cap_add: [NET_ADMIN]
+    restart: "no"
+    entrypoint: ["/tests/managed-peer-test.sh"]
+    depends_on:
+      gateway:
+        condition: service_healthy
+      target-a:
+        condition: service_healthy
+      target-b:
+        condition: service_healthy
+      target-c:
+        condition: service_healthy
+      target-denied:
+        condition: service_healthy
+    networks:
+      peer_net:
+        ipv4_address: 10.250.0.2
+
+  unmanaged-peer:
+    image: wgd-network-policy-integration:local
+    cap_add: [NET_ADMIN]
+    restart: "no"
+    entrypoint: ["/tests/unmanaged-peer-test.sh"]
+    depends_on:
+      gateway:
+        condition: service_healthy
+      target-denied:
+        condition: service_healthy
+    networks:
+      peer_net:
+        ipv4_address: 10.250.0.3
+
+networks:
+  peer_net:
+    ipam:
+      config:
+        - subnet: 10.250.0.0/24
+  target_a_net:
+    ipam:
+      config:
+        - subnet: 10.251.0.0/24
+  target_b_net:
+    ipam:
+      config:
+        - subnet: 10.252.0.0/24
+  target_d_net:
+    ipam:
+      config:
+        - subnet: 10.253.0.0/24

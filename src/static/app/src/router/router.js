@@ -72,6 +72,14 @@ const router = createRouter({
 					}
 				},
 				{
+					name: "Network Policies",
+					path: 'network-policies',
+					component: () => import('@/views/networkPolicies.vue'),
+					meta: {
+						title: "Network Policies"
+					}
+				},
+				{
 					path: 'ping',
 					name: "Ping",
 					component: () => import('@/views/ping.vue'),

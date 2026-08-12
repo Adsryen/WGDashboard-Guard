@@ -124,6 +124,7 @@ export default {
 								@refresh="this.$emit('refresh')"
 								@share="this.$emit('share')"
 								@assign="this.$emit('assign')"
+								@networkPolicy="this.$emit('networkPolicy')"
 								:Peer="Peer"
 								:ConfigurationInfo="ConfigurationInfo"
 								v-if="this.subMenuOpened"

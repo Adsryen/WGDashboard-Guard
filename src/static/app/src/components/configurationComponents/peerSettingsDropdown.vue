@@ -163,6 +163,13 @@ export default {
 						<i class="me-auto bi bi-diagram-2"></i> <LocaleText t="Assign Peer"></LocaleText>
 					</a>
 				</li>
+				<li>
+					<a class="dropdown-item d-flex" role="button"
+					   @click="this.$emit('networkPolicy')"
+					>
+						<i class="me-auto bi bi-shield-lock"></i> <LocaleText t="Network Policy"></LocaleText>
+					</a>
+				</li>
 				<li class="dropdown dropstart">
 					<a class="dropdown-item d-flex " role="button"
 					   data-bs-auto-close="outside"

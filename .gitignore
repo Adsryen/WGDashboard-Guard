@@ -9,6 +9,7 @@ src/test.py
 src/wg-dashboard.ini
 src/static/pic.xd
 *.conf
+!deploy/systemd/tmpfiles.d/*.conf
 private_key.txt
 public_key.txt
 *venv*
@@ -53,3 +54,7 @@ coverage
 
 *.tsbuildinfo
 .vite/*
+
+# Local Trellis workflow state and generated frontend release files.
+.trellis/
+src/static/dist/WGDashboardAdmin/

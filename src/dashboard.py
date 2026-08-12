@@ -39,6 +39,8 @@ from modules.DashboardClients import DashboardClients
 from modules.DashboardPlugins import DashboardPlugins
 from modules.DashboardWebHooks import DashboardWebHooks
 from modules.NewConfigurationTemplates import NewConfigurationTemplates
+from network_policy.service import NetworkPolicyService, NetworkPolicyServiceError
+from network_policy.validation import PolicyValidationError
 
 class CustomJsonEncoder(DefaultJSONProvider):
     def __init__(self, app):
@@ -193,7 +195,8 @@ dictConfig({
 WireguardConfigurations: dict[str, WireguardConfiguration] = {}
 CONFIGURATION_PATH = os.getenv('CONFIGURATION_PATH', '.')
 
-app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 5206928
+# Revalidate assets so a deployed policy UI cannot keep serving stale dynamic chunks.
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 app.secret_key = secrets.token_urlsafe(32)
 app.json = CustomJsonEncoder(app)
 with app.app_context():
@@ -208,6 +211,7 @@ with app.app_context():
     NewConfigurationTemplates: NewConfigurationTemplates = NewConfigurationTemplates()
     InitWireguardConfigurationsList(startup=True)
     DashboardClients: DashboardClients = DashboardClients(WireguardConfigurations)
+    NetworkPolicyManager = NetworkPolicyService(DashboardConfig.engine)
     app.register_blueprint(createClientBlueprint(WireguardConfigurations, DashboardConfig, DashboardClients))
 
 _, APP_PREFIX = DashboardConfig.GetConfig("Server", "app_prefix")
@@ -717,6 +721,11 @@ def API_updatePeerSettings(configName):
         wireguardConfig = WireguardConfigurations[configName]
         foundPeer, peer = wireguardConfig.searchPeer(id)
         if foundPeer:
+            if allowed_ip != peer.allowed_ip:
+                try:
+                    NetworkPolicyManager.suspend_bindings(configName, [peer.id], _network_policy_actor())
+                except NetworkPolicyServiceError as error:
+                    return ResponseObject(False, f"Cannot safely change Peer AllowedIPs: {error}", status_code=503)
             if wireguardConfig.Protocol == 'wg':
                 status, msg = peer.updatePeer(name,
                                               private_key,
@@ -772,6 +781,10 @@ def API_deletePeers(configName: str) -> ResponseObject:
     if configName in WireguardConfigurations.keys():
         if len(peers) == 0:
             return ResponseObject(False, "Please specify one or more peers", status_code=400)
+        try:
+            NetworkPolicyManager.suspend_bindings(configName, peers, _network_policy_actor())
+        except NetworkPolicyServiceError as error:
+            return ResponseObject(False, f"Cannot safely delete Peer with an active network policy: {error}", status_code=503)
         configuration = WireguardConfigurations.get(configName)
         status, msg = configuration.deletePeers(peers, AllPeerJobs, AllPeerShareLinks)
         
@@ -864,6 +877,172 @@ def API_allowAccessPeers(configName: str) -> ResponseObject:
         status, msg = configuration.allowAccessPeers(peers)
         return ResponseObject(status, msg)
     return ResponseObject(False, "Configuration does not exist")
+
+
+def _validate_network_policy_binding(configuration_name, peer_public_key, tunnel_address) -> tuple[object, object, str]:
+    if not isinstance(configuration_name, str) or configuration_name not in WireguardConfigurations:
+        raise PolicyValidationError("WireGuard configuration does not exist")
+    if not isinstance(peer_public_key, str) or not isinstance(tunnel_address, str):
+        raise PolicyValidationError("peer_public_key and tunnel_address are required")
+
+    configuration = WireguardConfigurations[configuration_name]
+    found_peer, peer = configuration.searchPeer(peer_public_key)
+    if not found_peer:
+        raise PolicyValidationError("Peer does not exist in the WireGuard configuration")
+
+    try:
+        requested_address = ipaddress.ip_address(tunnel_address)
+        allowed_networks = [
+            ipaddress.ip_network(value.strip(), strict=False)
+            for value in str(peer.allowed_ip).split(",")
+            if value.strip()
+        ]
+    except ValueError as error:
+        raise PolicyValidationError("Peer AllowedIPs cannot verify the requested tunnel address") from error
+
+    if not any(network.num_addresses == 1 and network.network_address == requested_address for network in allowed_networks):
+        raise PolicyValidationError("tunnel_address must be a single-host address in this Peer AllowedIPs")
+
+    return configuration, peer, str(requested_address)
+
+
+def _network_policy_payload_from_request() -> tuple[dict, object]:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        raise PolicyValidationError("request body must be an object")
+
+    configuration_name = data.get("configuration_name")
+    peer_public_key = data.get("peer_public_key")
+    tunnel_address = data.get("tunnel_address")
+    configuration, peer, normalized_address = _validate_network_policy_binding(
+        configuration_name, peer_public_key, tunnel_address
+    )
+
+    payload = {
+        "configuration_name": configuration.Name,
+        "interface_name": configuration.Name,
+        "peer_public_key": peer.id,
+        "tunnel_address": normalized_address,
+        "managed": data.get("managed", True),
+        "rules": data.get("rules", []),
+    }
+    return payload, configuration
+
+
+def _network_policy_actor() -> str:
+    return NetworkPolicyManager.actor_from_session(session.get("username"))
+
+
+def _network_policy_overview_peers() -> list[dict]:
+    """Build non-sensitive live Peer bindings for the policy inventory."""
+    peers = []
+    for configuration in WireguardConfigurations.values():
+        for peer in configuration.Peers:
+            addresses = []
+            for raw_address in str(peer.allowed_ip or "").split(","):
+                try:
+                    network = ipaddress.ip_network(raw_address.strip(), strict=False)
+                except ValueError:
+                    continue
+                if network.num_addresses == 1:
+                    addresses.append(str(network.network_address))
+
+            common = {
+                "configuration_name": configuration.Name,
+                "peer_public_key": peer.id,
+                "peer_name": peer.name or "",
+                "peer_status": peer.status,
+                "allowed_ip": peer.allowed_ip,
+                "peer_present": True,
+            }
+            if addresses:
+                peers.extend({**common, "tunnel_address": address, "eligible": True} for address in addresses)
+            else:
+                peers.append({**common, "tunnel_address": "", "eligible": False})
+    return peers
+
+
+@app.get(f'{APP_PREFIX}/api/networkPolicy/capabilities')
+def API_NetworkPolicyCapabilities() -> ResponseObject:
+    try:
+        return ResponseObject(data=NetworkPolicyManager.capabilities())
+    except NetworkPolicyServiceError as error:
+        return ResponseObject(False, str(error), status_code=503)
+
+
+@app.get(f'{APP_PREFIX}/api/networkPolicy/overview')
+def API_NetworkPolicyOverview() -> ResponseObject:
+    return ResponseObject(data=NetworkPolicyManager.overview(_network_policy_overview_peers()))
+
+
+@app.post(f'{APP_PREFIX}/api/networkPolicy/get')
+def API_NetworkPolicyGet() -> ResponseObject:
+    try:
+        payload, _ = _network_policy_payload_from_request()
+        return ResponseObject(data=NetworkPolicyManager.details(
+            payload["configuration_name"], payload["peer_public_key"], payload["tunnel_address"]
+        ))
+    except PolicyValidationError as error:
+        return ResponseObject(False, str(error), status_code=400)
+
+
+@app.post(f'{APP_PREFIX}/api/networkPolicy/dryRun')
+def API_NetworkPolicyDryRun() -> ResponseObject:
+    try:
+        payload, _ = _network_policy_payload_from_request()
+        return ResponseObject(data=NetworkPolicyManager.dry_run(payload))
+    except PolicyValidationError as error:
+        return ResponseObject(False, str(error), status_code=400)
+    except NetworkPolicyServiceError as error:
+        return ResponseObject(False, str(error), status_code=503)
+
+
+@app.post(f'{APP_PREFIX}/api/networkPolicy/apply')
+def API_NetworkPolicyApply() -> ResponseObject:
+    try:
+        payload, configuration = _network_policy_payload_from_request()
+        result = NetworkPolicyManager.apply(payload, _network_policy_actor())
+        DashboardLogger.log(str(request.url), str(request.remote_addr), Message=f"Network policy applied: {configuration.Name}")
+        return ResponseObject(data=result)
+    except PolicyValidationError as error:
+        return ResponseObject(False, str(error), status_code=400)
+    except NetworkPolicyServiceError as error:
+        return ResponseObject(False, str(error), status_code=503)
+
+
+@app.post(f'{APP_PREFIX}/api/networkPolicy/deactivate')
+def API_NetworkPolicyDeactivate() -> ResponseObject:
+    try:
+        payload, configuration = _network_policy_payload_from_request()
+        result = NetworkPolicyManager.deactivate(payload, _network_policy_actor())
+        DashboardLogger.log(str(request.url), str(request.remote_addr), Message=f"Network policy deactivated: {configuration.Name}")
+        return ResponseObject(data=result)
+    except PolicyValidationError as error:
+        return ResponseObject(False, str(error), status_code=400)
+    except NetworkPolicyServiceError as error:
+        return ResponseObject(False, str(error), status_code=503)
+
+
+@app.post(f'{APP_PREFIX}/api/networkPolicy/rollback')
+def API_NetworkPolicyRollback() -> ResponseObject:
+    data = request.get_json(silent=True)
+    revision_id = data.get("revision_id") if isinstance(data, dict) else None
+    if not isinstance(revision_id, str) or not revision_id:
+        return ResponseObject(False, "revision_id is required", status_code=400)
+    try:
+        revision_policy = NetworkPolicyManager.revision_policy(revision_id)
+        if revision_policy is None:
+            return ResponseObject(False, "policy revision does not exist", status_code=404)
+        _validate_network_policy_binding(
+            revision_policy.configuration_name,
+            revision_policy.peer_public_key,
+            revision_policy.tunnel_address,
+        )
+        result = NetworkPolicyManager.rollback(revision_id, _network_policy_actor())
+        DashboardLogger.log(str(request.url), str(request.remote_addr), Message="Network policy rolled back")
+        return ResponseObject(data=result)
+    except NetworkPolicyServiceError as error:
+        return ResponseObject(False, str(error), status_code=503)
 
 @app.post(f'{APP_PREFIX}/api/addPeers/<configName>')
 def API_addPeers(configName):
@@ -1741,7 +1920,10 @@ Index Page
 
 @app.get(f'{APP_PREFIX}/')
 def index():
-    return render_template('index.html', APP_PREFIX=APP_PREFIX)
+    # The HTML selects hashed Vite assets, so it must not outlive a deployment.
+    response = Flask.make_response(app, render_template('index.html', APP_PREFIX=APP_PREFIX))
+    response.headers['Cache-Control'] = 'no-store, max-age=0'
+    return response
 
 if __name__ == "__main__":
     startThreads()

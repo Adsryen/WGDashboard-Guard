@@ -80,10 +80,10 @@ export default {
 			return this.policy.managed ? "Applied" : "Disabled"
 		},
 		changeStateClass(){
-			if (!this.previewRequired && this.previewRuleset) return "alert-info"
-			if (this.hasUnappliedChanges) return "alert-warning"
-			if (this.hasPersistedPolicy && this.policy.managed) return "alert-success"
-			return "alert-secondary"
+			if (!this.previewRequired && this.previewRuleset) return "policy-state-info"
+			if (this.hasUnappliedChanges) return "policy-state-warning"
+			if (this.hasPersistedPolicy && this.policy.managed) return "policy-state-success"
+			return "policy-state-neutral"
 		},
 		policyStateIcon(){
 			if (!this.previewRequired && this.previewRuleset) return "bi bi-eye"
@@ -287,16 +287,17 @@ export default {
 				<header class="policy-header">
 					<div class="policy-heading">
 						<div class="policy-heading-icon"><i class="bi bi-shield-lock"></i></div>
-						<div>
-							<h4 class="mb-1"><LocaleText t="Network Policy" /></h4>
-							<div class="small text-muted"><LocaleText t="Control this Peer's forwarded access without changing gateway services." /></div>
+						<div class="policy-heading-copy">
+							<h5><LocaleText t="Network Policy" /></h5>
+							<p><LocaleText t="Control this Peer's forwarded access without changing gateway services." /></p>
 						</div>
 					</div>
 					<button type="button" class="btn-close ms-auto" :title="GetLocale('Close')" @click="$emit('close')"></button>
 				</header>
 
-			<div v-if="error" class="alert alert-danger py-2 small">{{ error }}</div>
-			<div v-if="capabilities && !capabilities.capabilities?.supported" class="alert alert-warning py-2 small">
+			<div v-if="error" class="policy-notice policy-notice-danger"><i class="bi bi-exclamation-octagon"></i>{{ error }}</div>
+			<div v-if="capabilities && !capabilities.capabilities?.supported" class="policy-notice policy-notice-warning">
+				<i class="bi bi-exclamation-triangle"></i>
 				{{ capabilities.capabilities?.message }}
 			</div>
 
@@ -394,8 +395,11 @@ export default {
 			</section>
 
 			<div v-if="previewRuleset" class="preview-panel mt-3">
-				<div class="d-flex align-items-center gap-2 small fw-bold mb-1"><i class="bi bi-eye"></i><LocaleText t="Generated nftables rules" /> <code class="text-muted">{{ previewHash }}</code></div>
-				<div class="small text-muted mb-2"><LocaleText t="These are the exact rules that will be applied after confirmation." /></div>
+				<div class="preview-heading">
+					<div><i class="bi bi-eye"></i><strong><LocaleText t="Generated nftables rules" /></strong></div>
+					<code>{{ previewHash }}</code>
+				</div>
+				<div class="preview-description"><LocaleText t="These are the exact rules that will be applied after confirmation." /></div>
 				<div class="policy-checks small mb-2">
 					<div><i class="bi bi-check-circle-fill text-success me-2"></i><LocaleText t="nftables syntax check passed in an isolated temporary table. No live forwarding rule was changed." /></div>
 					<div><i class="bi bi-shield-check text-primary me-2"></i><LocaleText t="Scope is limited to forwarded traffic from this Peer. Gateway SSH and WireGuard listener traffic are not changed." /></div>
@@ -405,12 +409,12 @@ export default {
 				<pre class="ruleset-preview mb-0">{{ previewRuleset }}</pre>
 			</div>
 
-			<div v-if="revisions.length" class="mt-4 border-top pt-3">
+			<div v-if="revisions.length" class="policy-history mt-4">
 				<h6><LocaleText t="Policy history"></LocaleText></h6>
-				<div v-for="revision in revisions" :key="revision.revision_id" class="d-flex gap-2 align-items-center py-2 border-bottom small">
-					<span :class="revision.status === 'applied' ? 'text-success' : revision.status === 'failed' ? 'text-danger' : 'text-warning'">{{ GetLocale(revision.status) }}</span>
+				<div v-for="revision in revisions" :key="revision.revision_id" class="policy-history-row">
+					<span class="policy-history-status" :class="revision.status === 'applied' ? 'policy-history-status-success' : revision.status === 'failed' ? 'policy-history-status-danger' : 'policy-history-status-warning'">{{ GetLocale(revision.status) }}</span>
 					<span>v{{ revision.version }} · {{ GetLocale(revision.action) }}</span>
-					<code class="text-muted text-truncate">{{ revision.hash }}</code>
+					<code>{{ revision.hash }}</code>
 					<button type="button" class="btn btn-sm btn-outline-secondary ms-auto" :title="GetLocale('Restore this revision')" :disabled="applying" @click="rollback(revision.revision_id)"><i class="bi bi-arrow-counterclockwise"></i></button>
 				</div>
 			</div>
@@ -420,40 +424,63 @@ export default {
 </template>
 
 <style scoped>
-.network-policy-overlay { position: fixed !important; inset: 0; z-index: 9999; overflow-y: auto; padding: 1.5rem; background-color: #00000080; backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }
-.network-policy-workbench { width: min(780px, 100%); min-height: 0; margin: 0 auto; border: 1px solid var(--bs-border-color); border-radius: 8px; }
-.policy-header { display: flex; align-items: flex-start; gap: 1rem; margin-bottom: 1.25rem; }
-.policy-heading { display: flex; min-width: 0; align-items: center; gap: 0.85rem; }
-.policy-heading h4 { font-size: 1.1rem; font-weight: 650; }
-.policy-heading-icon { display: grid; flex: 0 0 auto; place-items: center; width: 2.75rem; height: 2.75rem; border: 1px solid var(--bs-primary-border-subtle); border-radius: 7px; color: var(--bs-primary); background: var(--bs-primary-bg-subtle); }
-.policy-target { display: grid; grid-template-columns: minmax(0, 1fr) minmax(190px, 0.8fr); gap: 1rem; align-items: end; padding: 1rem; border: 1px solid var(--bs-border-color); border-radius: 7px; background: var(--bs-tertiary-bg); }
+.network-policy-overlay { position: fixed !important; inset: 0; z-index: 9999; overflow-y: auto; padding: 1.5rem; background-color: rgb(0 0 0 / 45%); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }
+.network-policy-workbench { width: min(780px, 100%); min-height: 0; margin: 0 auto; color: var(--bs-body-color); border: 1px solid var(--bs-border-color); border-radius: 8px; }
+.policy-header { display: flex; align-items: center; gap: 0.85rem; margin-bottom: 1.4rem; padding-bottom: 1rem; border-bottom: 1px solid var(--bs-border-color); }
+.policy-heading { display: flex; min-width: 0; align-items: center; gap: 0.75rem; }
+.policy-heading-copy { min-width: 0; }
+.policy-heading-copy h5 { margin: 0; color: var(--bs-emphasis-color); font-size: 1rem; font-weight: 650; }
+.policy-heading-copy p { margin: 0.2rem 0 0; color: var(--bs-secondary-color); font-size: 0.8rem; line-height: 1.35; }
+.policy-heading-icon { display: grid; flex: 0 0 auto; place-items: center; width: 2.35rem; height: 2.35rem; border: 1px solid var(--bs-primary-border-subtle); border-radius: 6px; color: var(--bs-primary); background: var(--bs-primary-bg-subtle); }
+.policy-target { display: grid; grid-template-columns: minmax(0, 1fr) minmax(190px, 0.8fr); gap: 1rem; align-items: end; padding: 1rem; color: var(--bs-body-color); border: 1px solid var(--bs-border-color); border-radius: 7px; background: var(--bs-tertiary-bg); }
 .policy-target-identity { min-width: 0; }
 .policy-field-label { display: block; margin-bottom: 0.3rem; color: var(--bs-secondary-color); font-size: 0.72rem; font-weight: 600; }
 .policy-target-identity strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .policy-target-meta { margin-top: 0.35rem; color: var(--bs-secondary-color); font-size: 0.8rem; }
-.policy-target-meta code { margin-left: 0.3rem; color: var(--bs-body-color); }
+.policy-target-meta code { margin-left: 0.3rem; color: var(--bs-emphasis-color); }
 .policy-address-control { min-width: 0; }
 .policy-address-control select { min-height: 2.25rem; font-family: var(--bs-font-monospace); }
 .policy-key-row { grid-column: 1 / -1; display: flex; align-items: end; gap: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--bs-border-color); }
 .policy-key-row > div { min-width: 0; flex: 1; }
 .policy-key { display: block; overflow-wrap: anywhere; color: var(--bs-secondary-color); font-size: 0.72rem; line-height: 1.45; }
 .policy-copy-button { flex: 0 0 auto; }
-.policy-state { display: flex; align-items: flex-start; gap: 0.65rem; padding: 0.75rem 0.9rem; border: 1px solid var(--bs-border-color); border-radius: 7px; font-size: 0.86rem; }
+.policy-state { display: flex; align-items: flex-start; gap: 0.65rem; padding: 0.75rem 0.9rem; color: var(--bs-body-color); border: 1px solid var(--bs-border-color); border-radius: 7px; background: var(--bs-tertiary-bg); font-size: 0.86rem; }
 .policy-state > i { margin-top: 0.1rem; }
+.policy-state-neutral { color: var(--bs-secondary-color); }
+.policy-state-info { color: var(--bs-info-text-emphasis); border-color: var(--bs-info-border-subtle); background: var(--bs-info-bg-subtle); }
+.policy-state-warning { color: var(--bs-warning-text-emphasis); border-color: var(--bs-warning-border-subtle); background: var(--bs-warning-bg-subtle); }
+.policy-state-success { color: var(--bs-success-text-emphasis); border-color: var(--bs-success-border-subtle); background: var(--bs-success-bg-subtle); }
+.policy-notice { display: flex; align-items: flex-start; gap: 0.55rem; margin-bottom: 1rem; padding: 0.7rem 0.85rem; border: 1px solid; border-radius: 7px; font-size: 0.85rem; }
+.policy-notice > i { margin-top: 0.1rem; }
+.policy-notice-danger { color: var(--bs-danger-text-emphasis); border-color: var(--bs-danger-border-subtle); background: var(--bs-danger-bg-subtle); }
+.policy-notice-warning { color: var(--bs-warning-text-emphasis); border-color: var(--bs-warning-border-subtle); background: var(--bs-warning-bg-subtle); }
 .policy-section { padding: 1rem; border: 1px solid var(--bs-border-color); border-radius: 7px; background: var(--bs-tertiary-bg); }
 .policy-switch-section { background: var(--bs-body-bg); }
 .policy-rules-section { padding-bottom: 0.4rem; }
 .policy-rules-fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
-.policy-section-disabled { opacity: 0.62; }
+.policy-section-disabled { opacity: 0.64; background: var(--bs-secondary-bg); }
 .rule-row { padding: 0.85rem 0; border-bottom: 1px solid var(--bs-border-color); }
 .rule-row:last-of-type { border-bottom: 0; }
 .rule-row .form-control, .rule-row .form-select, .rule-actions .btn { min-height: 2.375rem; }
 .rule-actions .btn { display: inline-grid; width: 2.375rem; place-items: center; padding: 0; }
 .empty-rules { margin-top: 0.75rem; padding: 0.7rem 0.8rem; border-left: 3px solid var(--bs-warning); background: var(--bs-warning-bg-subtle); color: var(--bs-warning-text-emphasis); font-size: 0.85rem; }
 .empty-rules-muted { border-left-color: var(--bs-secondary-color); background: var(--bs-secondary-bg); color: var(--bs-secondary-color); }
-.preview-panel { padding: 0.85rem; border: 1px solid var(--bs-info-border-subtle); border-radius: 6px; background: var(--bs-info-bg-subtle); }
-.policy-checks { display: grid; gap: 0.4rem; padding: 0.7rem; border: 1px solid var(--bs-border-color); border-radius: 6px; background: var(--bs-body-bg); }
-.ruleset-preview { max-height: 260px; overflow: auto; padding: 0.75rem; border: 1px solid var(--bs-border-color); background: var(--bs-tertiary-bg); font-size: 0.75rem; white-space: pre-wrap; }
+.preview-panel { padding: 1rem; color: var(--bs-body-color); border: 1px solid var(--bs-border-color); border-radius: 7px; background: var(--bs-tertiary-bg); }
+.preview-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; color: var(--bs-emphasis-color); font-size: 0.88rem; }
+.preview-heading strong { margin-left: 0.45rem; }
+.preview-heading code { overflow-wrap: anywhere; color: var(--bs-secondary-color); font-size: 0.7rem; text-align: right; }
+.preview-description { margin: 0.45rem 0 0.75rem; color: var(--bs-secondary-color); font-size: 0.8rem; }
+.policy-checks { display: grid; gap: 0.4rem; padding: 0.7rem; color: var(--bs-body-color); border: 1px solid var(--bs-border-color); border-radius: 6px; background: var(--bs-body-bg); }
+.ruleset-preview { max-height: 260px; overflow: auto; padding: 0.75rem; color: var(--bs-body-color); border: 1px solid var(--bs-border-color); border-radius: 4px; background: var(--bs-body-bg); font-size: 0.75rem; white-space: pre-wrap; }
+.policy-history { padding-top: 1rem; border-top: 1px solid var(--bs-border-color); }
+.policy-history h6 { color: var(--bs-emphasis-color); }
+.policy-history-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.7rem 0; border-bottom: 1px solid var(--bs-border-color); color: var(--bs-body-color); font-size: 0.8rem; }
+.policy-history-row code { min-width: 0; overflow: hidden; color: var(--bs-secondary-color); text-overflow: ellipsis; white-space: nowrap; }
+.policy-history-row .btn { margin-left: auto; }
+.policy-history-status { flex: 0 0 auto; font-weight: 600; }
+.policy-history-status-success { color: var(--bs-success-text-emphasis); }
+.policy-history-status-warning { color: var(--bs-warning-text-emphasis); }
+.policy-history-status-danger { color: var(--bs-danger-text-emphasis); }
 @media (max-width: 768px) { .network-policy-overlay { padding: 0.5rem; } .policy-target { grid-template-columns: 1fr; gap: 0.85rem; } }
 @media (max-width: 460px) { .network-policy-overlay { padding: 0; } .network-policy-workbench { min-height: 100%; border-radius: 0; } }
 </style>

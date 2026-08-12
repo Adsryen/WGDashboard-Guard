@@ -523,6 +523,10 @@
 	"Scope is limited to forwarded traffic from this Peer. Gateway SSH and WireGuard listener traffic are not changed.": "规则仅作用于此端点的转发流量，不会改动网关 SSH 或 WireGuard 监听流量。",
 	"One or more rules allow all ports. Confirm that this broad access is intended.": "有一条或多条规则允许所有端口，请确认这是预期的宽泛授权。",
 	"All other forwarded traffic from this Peer will be denied after application.": "应用后，此端点其余所有转发流量都会被拒绝。",
+	"No destination is allowed. Applying this policy denies all forwarded traffic for this Peer.": "未允许任何目标。应用此策略后，该端点的所有转发流量都会被拒绝。",
+	"Preview the generated rules before applying this policy.": "应用策略前，请先预览生成的规则。",
+	"Select a single-host tunnel address first.": "请先选择单个主机的隧道地址。",
+	"This Peer needs a single-host Allowed IP before a forwarding policy can be managed.": "该端点需要配置单个主机的允许 IP 地址，才能管理转发策略。",
 	"Actions": "操作",
 	"Loading...": "加载中..."
 }

@@ -195,7 +195,8 @@ dictConfig({
 WireguardConfigurations: dict[str, WireguardConfiguration] = {}
 CONFIGURATION_PATH = os.getenv('CONFIGURATION_PATH', '.')
 
-app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 5206928
+# Revalidate assets so a deployed policy UI cannot keep serving stale dynamic chunks.
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 app.secret_key = secrets.token_urlsafe(32)
 app.json = CustomJsonEncoder(app)
 with app.app_context():

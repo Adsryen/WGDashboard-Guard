@@ -16,6 +16,7 @@ export default {
 	data(){
 		return {
 			store: DashboardConfigurationStore(),
+			activeTab: "overview",
 			policy: emptyPolicy(),
 			tunnelAddress: "",
 			capabilities: null,
@@ -210,6 +211,7 @@ export default {
 					this.previewRuleset = res.data.ruleset;
 					this.previewHash = res.data.hash;
 					this.previewRequired = false;
+					this.activeTab = "review";
 				}else{
 					this.error = res.message;
 				}
@@ -318,6 +320,13 @@ export default {
 				{{ capabilities.capabilities?.message }}
 			</div>
 
+			<nav class="policy-tabs mb-3" role="tablist" :aria-label="GetLocale('Network policy sections')">
+				<button type="button" class="policy-tab" :class="{active: activeTab === 'overview'}" role="tab" :aria-selected="activeTab === 'overview'" @click="activeTab = 'overview'"><i class="bi bi-layout-text-sidebar-reverse"></i><span><LocaleText t="Overview" /></span></button>
+				<button type="button" class="policy-tab" :class="{active: activeTab === 'rules'}" role="tab" :aria-selected="activeTab === 'rules'" @click="activeTab = 'rules'"><i class="bi bi-signpost-split"></i><span><LocaleText t="Access rules" /></span></button>
+				<button type="button" class="policy-tab" :class="{active: activeTab === 'review'}" role="tab" :aria-selected="activeTab === 'review'" @click="activeTab = 'review'"><i class="bi bi-clipboard-check"></i><span><LocaleText t="Review and history" /></span></button>
+			</nav>
+
+			<div v-if="activeTab === 'overview'" class="policy-tab-panel" role="tabpanel">
 			<section class="policy-target mb-3">
 				<div class="policy-target-identity">
 					<span class="policy-field-label"><LocaleText t="Peer" /></span>
@@ -359,7 +368,10 @@ export default {
 					</div>
 				</div>
 			</section>
+			<div class="policy-overview-note"><i class="bi bi-info-circle"></i><span><LocaleText t="Each configured destination also permits ICMP diagnostics for that destination." /></span></div>
+			</div>
 
+			<div v-if="activeTab === 'rules'" class="policy-tab-panel" role="tabpanel">
 			<section class="policy-section policy-rules-section mb-3" :class="{'policy-section-disabled': !policy.managed}">
 				<div class="d-flex align-items-center gap-2 mb-1">
 					<div>
@@ -396,6 +408,7 @@ export default {
 				<div v-else-if="policy.rules.length === 0" class="empty-rules"><i class="bi bi-exclamation-triangle me-2"></i><LocaleText t="No destination is allowed. Applying this policy denies all forwarded traffic for this Peer." /></div>
 				<div v-else class="small text-muted mt-2"><i class="bi bi-activity me-1"></i><LocaleText t="ICMP diagnostics are allowed for every configured destination." /></div>
 			</section>
+			</div>
 
 			<section class="policy-actions">
 				<div class="d-flex align-items-center gap-2 mb-2">
@@ -413,7 +426,8 @@ export default {
 				</div>
 			</section>
 
-			<div v-if="previewRuleset" class="preview-panel mt-3">
+			<div v-if="activeTab === 'review'" class="policy-tab-panel" role="tabpanel">
+			<div v-if="previewRuleset" class="preview-panel mb-3">
 				<div class="preview-heading">
 					<div><i class="bi bi-eye"></i><strong><LocaleText t="Generated nftables rules" /></strong></div>
 					<code>{{ previewHash }}</code>
@@ -429,7 +443,9 @@ export default {
 				<pre class="ruleset-preview mb-0">{{ previewRuleset }}</pre>
 			</div>
 
-			<div v-if="revisions.length" class="policy-history mt-4">
+			<div v-else class="empty-rules empty-rules-muted"><i class="bi bi-clipboard2 me-2"></i><LocaleText t="Review changes to generate the exact nftables rules." /></div>
+
+			<div v-if="revisions.length" class="policy-history" :class="{'mt-4': previewRuleset}">
 				<h6><LocaleText t="Policy history"></LocaleText></h6>
 				<div v-for="revision in revisions" :key="revision.revision_id" class="policy-history-entry">
 					<div class="policy-history-row">
@@ -451,13 +467,14 @@ export default {
 				</div>
 			</div>
 			</div>
+			</div>
 		</div>
 	</Teleport>
 </template>
 
 <style scoped>
 .network-policy-overlay { position: fixed !important; inset: 0; z-index: 9999; overflow-y: auto; padding: 1.5rem; background-color: rgb(0 0 0 / 45%); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }
-.network-policy-workbench { width: min(780px, 100%); min-height: 0; margin: 0 auto; color: var(--bs-body-color); border: 1px solid var(--bs-border-color); border-radius: 8px; }
+.network-policy-workbench { width: min(1170px, 100%); min-height: 0; margin: 0 auto; color: var(--bs-body-color); border: 1px solid var(--bs-border-color); border-radius: 8px; }
 .policy-header { display: flex; align-items: center; gap: 0.85rem; margin-bottom: 1.4rem; padding-bottom: 1rem; border-bottom: 1px solid var(--bs-border-color); }
 .policy-heading { display: flex; min-width: 0; align-items: center; gap: 0.75rem; }
 .policy-heading-copy { min-width: 0; }
@@ -482,6 +499,13 @@ export default {
 .policy-state-info { color: var(--bs-info-text-emphasis); border-color: var(--bs-info-border-subtle); background: var(--bs-info-bg-subtle); }
 .policy-state-warning { color: var(--bs-warning-text-emphasis); border-color: var(--bs-warning-border-subtle); background: var(--bs-warning-bg-subtle); }
 .policy-state-success { color: var(--bs-success-text-emphasis); border-color: var(--bs-success-border-subtle); background: var(--bs-success-bg-subtle); }
+.policy-tabs { display: flex; gap: 0.35rem; padding: 0.35rem; overflow-x: auto; border: 1px solid var(--bs-border-color); border-radius: 7px; background: var(--bs-tertiary-bg); }
+.policy-tab { display: inline-flex; flex: 1 0 max-content; align-items: center; justify-content: center; gap: 0.45rem; min-height: 2.4rem; padding: 0.45rem 0.8rem; color: var(--bs-secondary-color); border: 1px solid transparent; border-radius: 5px; background: transparent; font-size: 0.84rem; font-weight: 600; }
+.policy-tab:hover { color: var(--bs-emphasis-color); background: var(--bs-secondary-bg); }
+.policy-tab.active { color: var(--bs-primary); border-color: var(--bs-primary-border-subtle); background: var(--bs-body-bg); box-shadow: 0 1px 2px rgb(0 0 0 / 8%); }
+.policy-tab:focus-visible { outline: 2px solid var(--bs-primary); outline-offset: 1px; }
+.policy-overview-note { display: flex; align-items: flex-start; gap: 0.55rem; padding: 0.8rem 0.9rem; color: var(--bs-secondary-color); border-left: 3px solid var(--bs-primary); background: var(--bs-primary-bg-subtle); font-size: 0.84rem; }
+.policy-overview-note > i { color: var(--bs-primary); }
 .policy-notice { display: flex; align-items: flex-start; gap: 0.55rem; margin-bottom: 1rem; padding: 0.7rem 0.85rem; border: 1px solid; border-radius: 7px; font-size: 0.85rem; }
 .policy-notice > i { margin-top: 0.1rem; }
 .policy-notice-danger { color: var(--bs-danger-text-emphasis); border-color: var(--bs-danger-border-subtle); background: var(--bs-danger-bg-subtle); }
@@ -520,6 +544,6 @@ export default {
 .policy-history-status-success { color: var(--bs-success-text-emphasis); }
 .policy-history-status-warning { color: var(--bs-warning-text-emphasis); }
 .policy-history-status-danger { color: var(--bs-danger-text-emphasis); }
-@media (max-width: 768px) { .network-policy-overlay { padding: 0.5rem; } .policy-target { grid-template-columns: 1fr; gap: 0.85rem; } }
+@media (max-width: 768px) { .network-policy-overlay { padding: 0.5rem; } .policy-target { grid-template-columns: 1fr; gap: 0.85rem; } .policy-tabs { gap: 0.25rem; } .policy-tab { flex: 0 0 auto; } }
 @media (max-width: 460px) { .network-policy-overlay { padding: 0; } .network-policy-workbench { min-height: 100%; border-radius: 0; } }
 </style>

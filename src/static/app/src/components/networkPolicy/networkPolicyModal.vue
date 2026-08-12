@@ -57,6 +57,7 @@ export default {
 		await Promise.all([this.loadCapabilities(), this.loadPolicy()]);
 	},
 	methods: {
+		GetLocale,
 		basePayload(){
 			return {
 				configuration_name: this.$route.params.id,

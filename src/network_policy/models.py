@@ -254,6 +254,7 @@ class NetworkPolicyRepository:
                     "action": row["Action"],
                     "status": row["ApplyStatus"],
                     "hash": row["PolicyHash"],
+                    "policy": self._deserialize(row["PolicyJson"]).to_payload(),
                     "created_at": row["CreatedAt"],
                     "error": row["ErrorSummary"],
                 }

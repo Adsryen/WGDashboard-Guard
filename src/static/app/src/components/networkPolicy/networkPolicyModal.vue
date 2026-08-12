@@ -20,6 +20,7 @@ export default {
 			tunnelAddress: "",
 			capabilities: null,
 			revisions: [],
+			expandedRevisionId: "",
 			previewRuleset: "",
 			previewHash: "",
 			previewRequired: true,
@@ -283,6 +284,16 @@ export default {
 				}
 				this.applying = false;
 			});
+		},
+		toggleRevision(revisionId){
+			this.expandedRevisionId = this.expandedRevisionId === revisionId ? "" : revisionId;
+		},
+		revisionPortLabel(rule){
+			if (rule.protocol === "icmp") return GetLocale("No ports for ICMP");
+			if (rule.ports === null) return GetLocale("All ports");
+			return rule.ports.from === rule.ports.to
+				? String(rule.ports.from)
+				: `${rule.ports.from}-${rule.ports.to}`;
 		}
 	}
 }
@@ -433,11 +444,23 @@ export default {
 
 			<div v-if="revisions.length" class="policy-history mt-4">
 				<h6><LocaleText t="Policy history"></LocaleText></h6>
-				<div v-for="revision in revisions" :key="revision.revision_id" class="policy-history-row">
-					<span class="policy-history-status" :class="revision.status === 'applied' ? 'policy-history-status-success' : revision.status === 'failed' ? 'policy-history-status-danger' : 'policy-history-status-warning'">{{ GetLocale(revision.status) }}</span>
-					<span>v{{ revision.version }} · {{ GetLocale(revision.action) }}</span>
-					<code>{{ revision.hash }}</code>
-					<button type="button" class="btn btn-sm btn-outline-secondary ms-auto" :title="GetLocale('Restore this revision')" :disabled="applying" @click="rollback(revision.revision_id)"><i class="bi bi-arrow-counterclockwise"></i></button>
+				<div v-for="revision in revisions" :key="revision.revision_id" class="policy-history-entry">
+					<div class="policy-history-row">
+						<span class="policy-history-status" :class="revision.status === 'applied' ? 'policy-history-status-success' : revision.status === 'failed' ? 'policy-history-status-danger' : 'policy-history-status-warning'">{{ GetLocale(revision.status) }}</span>
+						<span>v{{ revision.version }} · {{ GetLocale(revision.action) }}</span>
+						<code>{{ revision.hash }}</code>
+						<button type="button" class="btn btn-sm btn-outline-secondary" :title="GetLocale(expandedRevisionId === revision.revision_id ? 'Hide rule snapshot' : 'Show rule snapshot')" @click="toggleRevision(revision.revision_id)"><i :class="expandedRevisionId === revision.revision_id ? 'bi bi-chevron-up' : 'bi bi-chevron-down'"></i></button>
+						<button type="button" class="btn btn-sm btn-outline-secondary" :title="GetLocale('Restore this revision')" :disabled="applying" @click="rollback(revision.revision_id)"><i class="bi bi-arrow-counterclockwise"></i></button>
+					</div>
+					<div v-if="expandedRevisionId === revision.revision_id" class="policy-history-snapshot">
+						<div class="policy-history-mode"><i :class="revision.policy.managed ? 'bi bi-shield-check' : 'bi bi-shield-x'"></i><span><LocaleText :t="revision.policy.managed ? 'Forwarded access control enabled' : 'Forwarded access control disabled'" /></span><span class="ms-auto"><LocaleText :t="revision.policy.icmp_restricted ? 'ICMP diagnostics restricted' : 'ICMP diagnostics allowed by default'" /></span></div>
+						<div v-if="revision.policy.rules.length" class="policy-history-rules">
+							<div v-for="(rule, index) in revision.policy.rules" :key="`${revision.revision_id}-${index}`" class="policy-history-rule">
+								<code>{{ rule.destination }}</code><span class="badge text-bg-secondary">{{ rule.protocol.toUpperCase() }}</span><span class="text-muted">{{ revisionPortLabel(rule) }}</span>
+							</div>
+						</div>
+						<div v-else class="small text-muted"><LocaleText t="No explicit destination rules" /></div>
+					</div>
 				</div>
 			</div>
 			</div>
@@ -496,9 +519,16 @@ export default {
 .ruleset-preview { max-height: 260px; overflow: auto; padding: 0.75rem; color: var(--bs-body-color); border: 1px solid var(--bs-border-color); border-radius: 4px; background: var(--bs-body-bg); font-size: 0.75rem; white-space: pre-wrap; }
 .policy-history { padding-top: 1rem; border-top: 1px solid var(--bs-border-color); }
 .policy-history h6 { color: var(--bs-emphasis-color); }
-.policy-history-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.7rem 0; border-bottom: 1px solid var(--bs-border-color); color: var(--bs-body-color); font-size: 0.8rem; }
+.policy-history-entry { border-bottom: 1px solid var(--bs-border-color); }
+.policy-history-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.7rem 0; color: var(--bs-body-color); font-size: 0.8rem; }
 .policy-history-row code { min-width: 0; overflow: hidden; color: var(--bs-secondary-color); text-overflow: ellipsis; white-space: nowrap; }
-.policy-history-row .btn { margin-left: auto; }
+.policy-history-row code { flex: 1; }
+.policy-history-snapshot { display: grid; gap: 0.55rem; margin: 0 0 0.75rem; padding: 0.75rem; border: 1px solid var(--bs-border-color); border-radius: 6px; background: var(--bs-body-bg); font-size: 0.8rem; }
+.policy-history-mode { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; color: var(--bs-secondary-color); }
+.policy-history-mode > i { color: var(--bs-primary); }
+.policy-history-rules { display: grid; gap: 0.35rem; }
+.policy-history-rule { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; padding-top: 0.45rem; border-top: 1px solid var(--bs-border-color); }
+.policy-history-rule code { overflow-wrap: anywhere; color: var(--bs-emphasis-color); }
 .policy-history-status { flex: 0 0 auto; font-weight: 600; }
 .policy-history-status-success { color: var(--bs-success-text-emphasis); }
 .policy-history-status-warning { color: var(--bs-warning-text-emphasis); }

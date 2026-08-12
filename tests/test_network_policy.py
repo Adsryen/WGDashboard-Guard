@@ -288,6 +288,16 @@ class NetworkPolicyServiceTest(unittest.TestCase):
         self.assertEqual("apply", action)
         self.assertEqual([], policies)
 
+    def test_details_include_the_policy_snapshot_for_each_revision(self):
+        original = policy_payload(rules=[{
+            "destination": "192.168.10.117", "protocol": "tcp", "ports": {"from": 443, "to": 443}
+        }])
+        self.service.apply(original, "test-actor")
+
+        details = self.service.details("wg0", PUBLIC_KEY, "10.8.0.2")
+
+        self.assertEqual(validate_policy(original).to_payload(), details["revisions"][0]["policy"])
+
 
 if __name__ == "__main__":
     unittest.main()

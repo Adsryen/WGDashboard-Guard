@@ -123,7 +123,7 @@ def compile_ruleset(policies: Iterable[NetworkPolicy], table_name: str = TABLE_N
             )
             lines.append(
                 f"add rule {TABLE_FAMILY} {table_name} {INPUT_CHAIN_NAME} "
-                f"{deny_expression} tcp dport {DENIAL_RESPONSE_PORT} accept "
+                f"{deny_expression} ct status dnat tcp dport {DENIAL_RESPONSE_PORT} accept "
                 f"comment \"wgd-policy:{digest}\""
             )
         for rule in sorted(validated.rules, key=_rule_sort_key):

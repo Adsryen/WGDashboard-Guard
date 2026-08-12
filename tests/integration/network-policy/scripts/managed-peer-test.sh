@@ -45,6 +45,8 @@ test "${denied_json%403}" != "$denied_json"
 printf '%s' "$denied_json" | grep -q 'vpn_access_denied'
 printf '%s' "$denied_json" | grep -q '当前 VPN 端点没有访问权限'
 
+expect_drop_tcp 10.250.0.10 61573
+
 # These flows terminate on the gateway and must not enter the FORWARD hook.
 python3 /tests/port-open.py 10.250.0.10 22
 expect_udp 10.250.0.10 51820 wg-listener

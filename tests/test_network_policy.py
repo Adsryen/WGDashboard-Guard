@@ -103,7 +103,7 @@ class NetworkPolicyCompilerTest(unittest.TestCase):
         self.assertIn('ip daddr 192.168.10.117/32 meta l4proto icmp accept', ruleset)
         self.assertNotIn('ip saddr 10.8.0.2 meta l4proto icmp accept', ruleset)
         self.assertIn('tcp dport 80 redirect to :61573', ruleset)
-        self.assertIn(f'tcp dport {DENIAL_RESPONSE_PORT} accept', ruleset)
+        self.assertIn(f'ct status dnat tcp dport {DENIAL_RESPONSE_PORT} accept', ruleset)
         self.assertIn('meta l4proto tcp reject with tcp reset', ruleset)
         self.assertIn('meta l4proto udp reject with icmp port-unreachable', ruleset)
         self.assertIn(f'tcp dport {DENIAL_RESPONSE_PORT} reject with tcp reset', ruleset)

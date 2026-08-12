@@ -13,7 +13,7 @@ export default {
 		selectedPeer: Object,
 		configurationName: {type: String, default: ""}
 	},
-	emits: ["close"],
+	emits: ["close", "changed"],
 	data(){
 		return {
 			store: DashboardConfigurationStore(),
@@ -24,6 +24,8 @@ export default {
 			previewRuleset: "",
 			previewHash: "",
 			previewRequired: true,
+			hasPersistedPolicy: false,
+			persistedSignature: "",
 			loading: true,
 			applying: false,
 			error: ""
@@ -39,13 +41,36 @@ export default {
 		},
 		canApply(){
 			return this.capabilities?.capabilities?.supported === true && !this.previewRequired && !this.applying
+		},
+		policySignature(){
+			return JSON.stringify(this.policy)
+		},
+		hasUnappliedChanges(){
+			return this.policySignature !== this.persistedSignature
+		},
+		changeState(){
+			if (this.loading) return "Loading policy state"
+			if (!this.previewRequired && this.previewRuleset) return "Preview ready - confirm to apply"
+			if (this.hasUnappliedChanges) return "Changes not applied"
+			if (!this.hasPersistedPolicy) return "Not configured"
+			return this.policy.managed ? "Applied" : "Disabled"
+		},
+		changeStateClass(){
+			if (!this.previewRequired && this.previewRuleset) return "alert-info"
+			if (this.hasUnappliedChanges) return "alert-warning"
+			if (this.hasPersistedPolicy && this.policy.managed) return "alert-success"
+			return "alert-secondary"
 		}
 	},
 	watch: {
 		policy: {
 			deep: true,
 			handler(){
-				this.previewRequired = true
+				if (!this.loading){
+					this.previewRequired = true
+					this.previewRuleset = ""
+					this.previewHash = ""
+				}
 			}
 		},
 		tunnelAddress(){
@@ -91,6 +116,8 @@ export default {
 			await fetchPost("/api/networkPolicy/get", this.basePayload(), (res) => {
 				if (res.status){
 					this.policy = res.data.policy || emptyPolicy();
+					this.hasPersistedPolicy = Boolean(res.data.policy);
+					this.persistedSignature = JSON.stringify(this.policy);
 					this.revisions = res.data.revisions || [];
 					this.previewRequired = true;
 					this.previewRuleset = "";
@@ -143,6 +170,7 @@ export default {
 					this.previewRequired = true;
 					this.previewRuleset = "";
 					this.loadPolicy();
+					this.$emit("changed");
 				}else{
 					this.error = res.message;
 				}
@@ -157,6 +185,7 @@ export default {
 					this.policy = emptyPolicy();
 					this.previewRuleset = "";
 					this.loadPolicy();
+					this.$emit("changed");
 				}else{
 					this.error = res.message;
 				}
@@ -169,6 +198,7 @@ export default {
 				if (res.status){
 					this.store.newMessage("WGDashboard", GetLocale("Network policy rolled back"), "success");
 					this.loadPolicy();
+					this.$emit("changed");
 				}else{
 					this.error = res.message;
 				}
@@ -193,6 +223,14 @@ export default {
 			<div v-if="error" class="alert alert-danger py-2 small">{{ error }}</div>
 			<div v-if="capabilities && !capabilities.capabilities?.supported" class="alert alert-warning py-2 small">
 				{{ capabilities.capabilities?.message }}
+			</div>
+			<div class="alert py-2 small d-flex align-items-center gap-2" :class="changeStateClass">
+				<i :class="!previewRequired && previewRuleset ? 'bi bi-eye' : hasUnappliedChanges ? 'bi bi-pencil-square' : hasPersistedPolicy && policy.managed ? 'bi bi-shield-check' : 'bi bi-shield' "></i>
+				<div>
+					<strong><LocaleText :t="changeState" /></strong>
+					<span v-if="hasUnappliedChanges" class="ms-1"><LocaleText t="Editing does not change forwarding access. Preview the change, then confirm application." /></span>
+					<span v-else-if="!previewRequired && previewRuleset" class="ms-1"><LocaleText t="Review the generated rules, then confirm application to save and enforce them." /></span>
+				</div>
 			</div>
 
 			<div class="mb-3">
@@ -238,9 +276,9 @@ export default {
 			</div>
 
 			<div class="d-flex gap-2 border-top mt-4 pt-3">
-				<button type="button" class="btn btn-outline-primary" :disabled="loading || applying" @click="preview"><i class="bi bi-eye me-1"></i><LocaleText t="Preview"></LocaleText></button>
-				<button type="button" class="btn btn-primary" :disabled="!canApply" @click="apply"><i class="bi bi-shield-check me-1"></i><LocaleText t="Apply"></LocaleText></button>
-				<button type="button" class="btn btn-outline-danger ms-auto" :disabled="loading || applying" @click="deactivate"><i class="bi bi-shield-x me-1"></i><LocaleText t="Disable"></LocaleText></button>
+				<button type="button" class="btn btn-outline-primary" :disabled="loading || applying" @click="preview"><i class="bi bi-eye me-1"></i><LocaleText t="Preview changes"></LocaleText></button>
+				<button type="button" class="btn btn-primary" :disabled="!canApply" @click="apply"><i class="bi bi-shield-check me-1"></i><LocaleText t="Confirm apply"></LocaleText></button>
+				<button v-if="hasPersistedPolicy && policy.managed" type="button" class="btn btn-outline-danger ms-auto" :disabled="loading || applying" @click="deactivate"><i class="bi bi-shield-x me-1"></i><LocaleText t="Disable policy"></LocaleText></button>
 			</div>
 
 			<div v-if="previewRuleset" class="mt-3">

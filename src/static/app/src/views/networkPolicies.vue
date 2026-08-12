@@ -1,13 +1,11 @@
 <script setup>
 import {computed, defineAsyncComponent, ref} from "vue";
-import {useRouter} from "vue-router";
 import {fetchGet} from "@/utilities/fetch.js";
 import LocaleText from "@/components/text/localeText.vue";
 import {GetLocale} from "@/utilities/locale.js";
 
 const NetworkPolicyModal = defineAsyncComponent(() => import("@/components/networkPolicy/networkPolicyModal.vue"));
 
-const router = useRouter();
 const loading = ref(true);
 const error = ref("");
 const rows = ref([]);
@@ -88,10 +86,6 @@ const openPolicy = (row) => {
 	selectedPeer.value = {id: row.peer_public_key, name: row.peer_name, allowed_ip: row.allowed_ip};
 	selectedConfiguration.value = row.configuration_name;
 	policyModalOpen.value = true;
-};
-const openPeer = (row) => {
-	if (!row.peer_present) return;
-	router.push({path: `/configuration/${row.configuration_name}/peers`, query: {id: row.peer_public_key}});
 };
 const closePolicy = async () => {
 	policyModalOpen.value = false;
@@ -177,11 +171,10 @@ const closePolicy = async () => {
 							<div v-if="row.rule_count" class="small text-muted mt-1">{{ row.rule_count }} <LocaleText t="Rules" /></div>
 						</td>
 						<td class="small text-muted">{{ formatDate(row.last_apply_at || row.updated_at) }}</td>
-						<td>
-							<div class="d-flex justify-content-end gap-1">
-								<button v-if="row.peer_present" class="btn btn-sm btn-outline-secondary" type="button" :title="GetLocale('Open Peer')" @click="openPeer(row)"><i class="bi bi-box-arrow-up-right"></i></button>
-								<button class="btn btn-sm btn-primary" type="button" :disabled="!canOpenPolicy(row)" :title="GetLocale('Open policy')" @click="openPolicy(row)"><i class="bi bi-shield-lock"></i></button>
-							</div>
+						<td class="text-end">
+							<button class="btn btn-sm btn-primary" type="button" :disabled="!canOpenPolicy(row)" :title="canOpenPolicy(row) ? GetLocale('Configure policy') : GetLocale('Single-host tunnel address is required')" @click="openPolicy(row)">
+								<i class="bi bi-shield-lock me-1"></i><LocaleText t="Configure policy" />
+							</button>
 						</td>
 					</tr>
 				</tbody>
@@ -193,7 +186,7 @@ const closePolicy = async () => {
 	</div>
 
 	<Transition name="zoom">
-		<NetworkPolicyModal v-if="policyModalOpen && selectedPeer" :selectedPeer="selectedPeer" :configurationName="selectedConfiguration" @close="closePolicy" />
+		<NetworkPolicyModal v-if="policyModalOpen && selectedPeer" :selectedPeer="selectedPeer" :configurationName="selectedConfiguration" @changed="loadOverview" @close="closePolicy" />
 	</Transition>
 </template>
 

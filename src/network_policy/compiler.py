@@ -64,17 +64,6 @@ def _rule_expression(policy: NetworkPolicy, rule: NetworkPolicyRule) -> str:
     return expression
 
 
-def _allows_http(rule: NetworkPolicyRule) -> bool:
-    """Return whether a TCP rule allows plain HTTP port 80."""
-    return rule.protocol == "tcp" and (
-        rule.port_from is None or rule.port_from <= 80 <= rule.port_to
-    )
-
-
-def _http_destinations(policy: NetworkPolicy) -> list[str]:
-    return sorted({rule.destination for rule in policy.rules if _allows_http(rule)})
-
-
 def _deny_expression(policy: NetworkPolicy) -> str:
     family = _address_family(policy.tunnel_address)
     return f'iifname "{policy.interface_name}" {family} saddr {policy.tunnel_address}'
@@ -107,18 +96,23 @@ def compile_ruleset(policies: Iterable[NetworkPolicy], table_name: str = TABLE_N
         validated = NetworkPolicy.from_payload(policy)
         deny_expression = _deny_expression(validated)
         family = _address_family(validated.tunnel_address)
-        http_destinations = _http_destinations(validated)
-
-        for destination in http_destinations:
-            lines.append(
-                f"add rule {TABLE_FAMILY} {table_name} {DENIAL_NAT_CHAIN_NAME} "
-                f"{deny_expression} {family} daddr {destination} tcp dport 80 accept "
-                f"comment \"wgd-policy:{digest}\""
-            )
         if family == "ip":
+            for rule in sorted(validated.rules, key=_rule_sort_key):
+                if rule.protocol != "tcp":
+                    continue
+                lines.append(
+                    f"add rule {TABLE_FAMILY} {table_name} {DENIAL_NAT_CHAIN_NAME} "
+                    f"{_rule_expression(validated, rule)} accept "
+                    f"comment \"wgd-policy:{digest}\""
+                )
             lines.append(
                 f"add rule {TABLE_FAMILY} {table_name} {DENIAL_NAT_CHAIN_NAME} "
-                f"{deny_expression} tcp dport 80 redirect to :{DENIAL_RESPONSE_PORT} "
+                f"{deny_expression} tcp dport {DENIAL_RESPONSE_PORT} accept "
+                f"comment \"wgd-denial-guard\""
+            )
+            lines.append(
+                f"add rule {TABLE_FAMILY} {table_name} {DENIAL_NAT_CHAIN_NAME} "
+                f"{deny_expression} meta l4proto tcp redirect to :{DENIAL_RESPONSE_PORT} "
                 f"comment \"wgd-policy:{digest}\""
             )
             lines.append(

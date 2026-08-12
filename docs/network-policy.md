@@ -45,7 +45,7 @@ The table may not exist until the first successful policy application. In that c
 
 ## Denied HTTP responses
 
-For an enabled Peer, a forwarded IPv4 HTTP request to an unallowed destination is redirected to the local denial responder and receives `403`. Browser-style requests receive an HTML page; requests that accept JSON, and `/api/` paths, receive JSON. HTTPS is not intercepted and remains a fast connection failure when unallowed.
+For an enabled Peer, every unallowed IPv4 TCP connection is redirected to the local responder, regardless of destination port. It returns `403` when the client sends a syntactically valid HTTP request; browser-style requests receive an HTML page, while requests that accept JSON and `/api/` paths receive JSON. Non-HTTP traffic, including TLS and database protocols, is closed immediately without a forged protocol response. Explicitly allowed TCP flows bypass the redirect unchanged.
 
 The responder uses TCP `61573`. It is not a public service and must not be added to a router port-forward. nftables permits it only for the managed Peer after the HTTP redirect, then rejects every direct connection to that port. It listens on the gateway addresses because nftables `redirect` preserves the original destination address; do not bypass or remove the owned input-chain guard.
 

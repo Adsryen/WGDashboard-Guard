@@ -6,6 +6,8 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import argparse
 import json
+import re
+import socket
 
 from .compiler import DENIAL_RESPONSE_PORT
 
@@ -47,6 +49,30 @@ class DenialRequestHandler(BaseHTTPRequestHandler):
     server_version = "WGDashboardVPNDenial"
     sys_version = ""
 
+    _http_request_line = re.compile(rb"^[!#$%&'*+.^_`|~0-9A-Za-z-]+\s+\S+\s+HTTP/\d\.\d\r?\n$")
+
+    def setup(self) -> None:
+        super().setup()
+        self.connection.settimeout(1)
+
+    def handle_one_request(self) -> None:
+        try:
+            first_byte = self.connection.recv(1, socket.MSG_PEEK)
+        except (OSError, TimeoutError):
+            return
+        if not first_byte or first_byte[0] < 0x20 or first_byte[0] > 0x7E:
+            return
+        try:
+            self.raw_requestline = self.rfile.readline(65537)
+        except (OSError, TimeoutError):
+            return
+        if not self.raw_requestline or len(self.raw_requestline) > 65536:
+            return
+        if not self._http_request_line.match(self.raw_requestline):
+            return
+        if self.parse_request():
+            self._respond()
+
     def _respond(self) -> None:
         chinese = _prefers_chinese(self.headers.get("Accept-Language", ""))
         if _prefers_json(self.headers.get("Accept", ""), self.path):
@@ -63,15 +89,6 @@ class DenialRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
-
-    do_GET = _respond
-    do_HEAD = _respond
-    do_POST = _respond
-    do_PUT = _respond
-    do_PATCH = _respond
-    do_DELETE = _respond
-    do_OPTIONS = _respond
-    do_CONNECT = _respond
 
     def log_message(self, format: str, *args) -> None:
         """Avoid recording requested paths or source details in responder logs."""

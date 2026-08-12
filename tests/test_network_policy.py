@@ -102,7 +102,7 @@ class NetworkPolicyCompilerTest(unittest.TestCase):
         self.assertIn('ip daddr 192.168.0.170/32 meta l4proto icmp accept', ruleset)
         self.assertIn('ip daddr 192.168.10.117/32 meta l4proto icmp accept', ruleset)
         self.assertNotIn('ip saddr 10.8.0.2 meta l4proto icmp accept', ruleset)
-        self.assertIn('tcp dport 80 redirect to :61573', ruleset)
+        self.assertIn('meta l4proto tcp redirect to :61573', ruleset)
         self.assertIn(f'ct status dnat tcp dport {DENIAL_RESPONSE_PORT} accept', ruleset)
         self.assertIn('meta l4proto tcp reject with tcp reset', ruleset)
         self.assertIn('meta l4proto udp reject with icmp port-unreachable', ruleset)
@@ -132,7 +132,19 @@ class NetworkPolicyCompilerTest(unittest.TestCase):
         ruleset, _ = compile_ruleset([policy])
 
         bypass = 'ip daddr 192.168.0.170/32 tcp dport 80 accept'
-        redirect = f'tcp dport 80 redirect to :{DENIAL_RESPONSE_PORT}'
+        redirect = f'meta l4proto tcp redirect to :{DENIAL_RESPONSE_PORT}'
+        self.assertIn(bypass, ruleset)
+        self.assertIn(redirect, ruleset)
+        self.assertLess(ruleset.index(bypass), ruleset.index(redirect))
+
+    def test_allowed_nonstandard_tcp_destination_bypasses_denial_redirect(self):
+        policy = validate_policy(policy_payload(rules=[
+            {"destination": "192.168.0.170", "protocol": "tcp", "ports": {"from": 8096, "to": 8096}},
+        ]))
+        ruleset, _ = compile_ruleset([policy])
+
+        bypass = 'ip daddr 192.168.0.170/32 tcp dport 8096 accept'
+        redirect = f'meta l4proto tcp redirect to :{DENIAL_RESPONSE_PORT}'
         self.assertIn(bypass, ruleset)
         self.assertIn(redirect, ruleset)
         self.assertLess(ruleset.index(bypass), ruleset.index(redirect))
@@ -215,6 +227,14 @@ class NetworkPolicyDenialResponderTest(unittest.TestCase):
             {"error": "vpn_access_denied", "message": "This VPN endpoint is not authorized to access this resource. Contact an administrator."},
             __import__("json").loads(body),
         )
+
+    def test_non_http_request_is_closed_without_a_response(self):
+        connection = __import__("socket").create_connection(("127.0.0.1", self.server.server_port), timeout=2)
+        try:
+            connection.sendall(b"\x16\x03\x01\x00\x00")
+            self.assertEqual(b"", connection.recv(1))
+        finally:
+            connection.close()
 
 
 @unittest.skipIf(db is None, "SQLAlchemy is required for Dashboard persistence tests")

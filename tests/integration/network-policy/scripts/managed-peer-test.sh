@@ -44,6 +44,9 @@ denied_json="$(curl --noproxy '*' --silent --show-error --max-time 2 --header 'A
 test "${denied_json%403}" != "$denied_json"
 printf '%s' "$denied_json" | grep -q 'vpn_access_denied'
 printf '%s' "$denied_json" | grep -q '当前 VPN 端点没有访问权限'
+denied_nonstandard_html="$(curl --noproxy '*' --silent --show-error --max-time 2 --write-out '%{http_code}' http://10.253.0.200:8096/)"
+test "${denied_nonstandard_html%403}" != "$denied_nonstandard_html"
+printf '%s' "$denied_nonstandard_html" | grep -q 'VPN access denied'
 
 expect_drop_tcp 10.250.0.10 61573
 

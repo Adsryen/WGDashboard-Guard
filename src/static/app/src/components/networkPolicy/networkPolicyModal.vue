@@ -10,9 +10,7 @@ export default {
 	name: "networkPolicyModal",
 	components: {LocaleText},
 	props: {
-		selectedPeer: Object,
-		configurationName: {type: String, default: ""},
-		initialTunnelAddress: {type: String, default: ""}
+		target: {type: Object, required: true}
 	},
 	emits: ["close", "changed"],
 	data(){
@@ -35,7 +33,7 @@ export default {
 	},
 	computed: {
 		tunnelAddresses(){
-			return String(this.selectedPeer?.allowed_ip || "")
+			return String(this.target.peer?.allowed_ip || "")
 				.split(",")
 				.map(value => value.trim())
 				.filter(value => /\/(32|128)$/.test(value))
@@ -76,7 +74,7 @@ export default {
 			return "bi bi-shield"
 		},
 		peerKey(){
-			const key = this.selectedPeer?.id || ""
+			const key = this.target.peer?.id || ""
 			return key.length > 26 ? `${key.slice(0, 12)}...${key.slice(-10)}` : key
 		},
 		policyModeDescription(){
@@ -105,20 +103,17 @@ export default {
 		}
 	},
 	async mounted(){
-		this.tunnelAddress = this.tunnelAddresses.includes(this.initialTunnelAddress)
-			? this.initialTunnelAddress
+		this.tunnelAddress = this.tunnelAddresses.includes(this.target.tunnelAddress)
+			? this.target.tunnelAddress
 			: this.tunnelAddresses[0] || "";
 		await Promise.all([this.loadCapabilities(), this.loadPolicy()]);
 	},
 	methods: {
 		GetLocale,
-		getConfigurationName(){
-			return this.configurationName || this.$route.params.id
-		},
 		basePayload(){
 			return {
-				configuration_name: this.getConfigurationName(),
-				peer_public_key: this.selectedPeer.id,
+				configuration_name: this.target.configurationName,
+				peer_public_key: this.target.peer.id,
 				tunnel_address: this.tunnelAddress,
 				managed: this.policy.managed,
 				rules: this.policy.rules
@@ -256,43 +251,26 @@ export default {
 
 <template>
 	<Teleport to="body">
-	<div class="network-policy-overlay">
-		<div class="dashboardModal network-policy-workbench bg-body shadow p-4 p-md-4">
-			<div class="d-flex align-items-start gap-3 mb-3">
-				<div class="policy-heading">
-					<div class="policy-heading-icon"><i class="bi bi-shield-lock"></i></div>
-					<div>
-						<h5 class="mb-1"><LocaleText t="Network access policy"></LocaleText></h5>
-						<div class="small text-muted"><LocaleText t="Control this Peer\'s forwarded access without changing gateway services."></LocaleText></div>
+		<div class="network-policy-overlay">
+			<div class="network-policy-dialog">
+				<div class="card rounded-3 shadow network-policy-card">
+					<div class="card-header bg-transparent d-flex align-items-center gap-2 border-0 p-4 pb-2">
+						<div>
+							<h4 class="mb-0"><i class="bi bi-shield-lock me-2"></i><LocaleText t="Network Policy" /></h4>
+							<div class="small text-muted mt-1">{{ target.peer.name || target.peer.id }}</div>
+						</div>
+						<button type="button" class="btn-close ms-auto" :title="GetLocale('Close')" @click="$emit('close')"></button>
 					</div>
-				</div>
-				<button type="button" class="btn-close ms-auto" :title="GetLocale('Close')" @click="$emit('close')"></button>
-			</div>
+					<div class="card-body px-4 pb-4">
 
 			<div v-if="error" class="alert alert-danger py-2 small">{{ error }}</div>
 			<div v-if="capabilities && !capabilities.capabilities?.supported" class="alert alert-warning py-2 small">
 				{{ capabilities.capabilities?.message }}
 			</div>
 
-			<div class="policy-context mb-3">
-				<div class="policy-context-item policy-context-peer">
-					<span><LocaleText t="Peer" /></span>
-					<strong>{{ selectedPeer.name || selectedPeer.id }}</strong>
-				</div>
-				<div class="policy-context-item">
-					<span><LocaleText t="Configuration" /></span>
-					<code>{{ getConfigurationName() || "-" }}</code>
-				</div>
-				<div class="policy-context-item">
-					<span><LocaleText t="Peer tunnel address" /></span>
-					<select class="form-select form-select-sm" v-model="tunnelAddress" :disabled="tunnelAddresses.length < 2">
-						<option v-for="address in tunnelAddresses" :key="address" :value="address">{{ address }}</option>
-					</select>
-				</div>
-				<div class="policy-context-item">
-					<span><LocaleText t="Public Key" /></span>
-					<code :title="selectedPeer.id">{{ peerKey }}</code>
-				</div>
+			<div class="policy-meta mb-3">
+				<span><LocaleText t="Configuration" /> <code>{{ target.configurationName }}</code></span>
+				<span><LocaleText t="Public Key" /> <code :title="target.peer.id">{{ peerKey }}</code></span>
 			</div>
 
 			<div class="alert py-2 small d-flex align-items-center gap-2 mb-3" :class="changeStateClass">
@@ -304,19 +282,21 @@ export default {
 				</div>
 			</div>
 
-			<section class="policy-section mb-3">
-				<div class="d-flex align-items-start gap-3">
-					<div class="form-check form-switch m-0 pt-1">
-						<input class="form-check-input" id="network-policy-managed" type="checkbox" v-model="policy.managed" @change="onManagedChange">
-					</div>
-					<div>
-						<label class="form-check-label fw-semibold" for="network-policy-managed"><LocaleText t="Enable forwarded access control" /></label>
-						<div class="small text-muted"><LocaleText :t="policyModeDescription" /></div>
-					</div>
-				</div>
-			</section>
+			<div class="mb-3">
+				<label class="form-label small fw-bold"><LocaleText t="Peer tunnel address" /></label>
+				<select class="form-select" v-model="tunnelAddress" :disabled="tunnelAddresses.length < 2">
+					<option v-for="address in tunnelAddresses" :key="address" :value="address">{{ address }}</option>
+				</select>
+				<div class="form-text"><LocaleText t="Only a single-host Allowed IP can be bound to a forwarding policy." /></div>
+			</div>
 
-			<section v-if="policy.managed" class="policy-section mb-3">
+			<div class="form-check form-switch mb-3">
+						<input class="form-check-input" id="network-policy-managed" type="checkbox" v-model="policy.managed" @change="onManagedChange">
+				<label class="form-check-label fw-semibold" for="network-policy-managed"><LocaleText t="Enable forwarded access control" /></label>
+				<div class="form-text ms-0"><LocaleText :t="policyModeDescription" /></div>
+			</div>
+
+			<div v-if="policy.managed" class="border-top pt-3">
 				<div class="d-flex align-items-center gap-2 mb-1">
 					<div>
 						<h6 class="mb-0"><LocaleText t="Allowed destinations" /></h6>
@@ -346,9 +326,9 @@ export default {
 					</div>
 				</div>
 				<div v-if="policy.rules.length === 0" class="empty-rules"><i class="bi bi-exclamation-triangle me-2"></i><LocaleText t="No destination is allowed. Applying this policy denies all forwarded traffic for this Peer." /></div>
-			</section>
+			</div>
 
-			<section class="policy-actions border-top pt-3">
+			<div class="policy-actions border-top mt-4 pt-3">
 				<div class="d-flex align-items-center gap-2 mb-2">
 					<i class="bi bi-clipboard-check text-primary"></i>
 					<div class="small text-muted"><LocaleText t="Review the rules, then confirm before applying them to the gateway." /></div>
@@ -362,7 +342,7 @@ export default {
 						<button v-if="disableConfirmation" type="button" class="btn btn-outline-secondary" :disabled="applying" @click="requestDeactivate"><LocaleText t="Cancel"></LocaleText></button>
 					</div>
 				</div>
-			</section>
+			</div>
 
 			<div v-if="previewRuleset" class="preview-panel mt-3">
 				<div class="d-flex align-items-center gap-2 small fw-bold mb-1"><i class="bi bi-eye"></i><LocaleText t="Generated nftables rules" /> <code class="text-muted">{{ previewHash }}</code></div>
@@ -379,27 +359,24 @@ export default {
 					<button type="button" class="btn btn-sm btn-outline-secondary ms-auto" :title="GetLocale('Restore this revision')" :disabled="applying" @click="rollback(revision.revision_id)"><i class="bi bi-arrow-counterclockwise"></i></button>
 				</div>
 			</div>
-		</div>
-	</div>
+			</div>
+					</div>
+				</div>
+			</div>
 	</Teleport>
 </template>
 
 <style scoped>
-.network-policy-overlay { position: fixed !important; inset: 0; z-index: 9999; overflow-y: auto; padding: 1rem; background-color: #00000060; backdrop-filter: blur(1px); -webkit-backdrop-filter: blur(1px); }
-.network-policy-workbench { width: min(920px, 100%); min-height: 0; margin: 0 auto; }
-.policy-heading { display: flex; align-items: center; gap: 0.75rem; }
-.policy-heading-icon { display: grid; place-items: center; width: 2.4rem; height: 2.4rem; border: 1px solid var(--bs-primary-border-subtle); border-radius: 6px; color: var(--bs-primary); background: var(--bs-primary-bg-subtle); }
-.policy-context { display: grid; grid-template-columns: minmax(150px, 1.25fr) repeat(3, minmax(120px, 1fr)); border: 1px solid var(--bs-border-color); border-radius: 6px; overflow: hidden; }
-.policy-context-item { min-width: 0; padding: 0.6rem 0.75rem; border-left: 1px solid var(--bs-border-color); }
-.policy-context-item:first-child { border-left: 0; }
-.policy-context-item > span { display: block; margin-bottom: 0.2rem; color: var(--bs-secondary-color); font-size: 0.7rem; font-weight: 600; text-transform: uppercase; }
-.policy-context-item strong, .policy-context-item code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.policy-section { padding: 1rem; border: 1px solid var(--bs-border-color); border-radius: 6px; }
+.network-policy-overlay { position: fixed !important; inset: 0; z-index: 9999; overflow-y: auto; padding: 1.75rem; background-color: #00000060; backdrop-filter: blur(1px); -webkit-backdrop-filter: blur(1px); }
+.network-policy-dialog { display: flex; min-height: 100%; width: 100%; align-items: center; justify-content: center; }
+.network-policy-card { width: min(980px, 100%); }
+.policy-meta { display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem; font-size: 0.75rem; color: var(--bs-secondary-color); }
+.policy-meta code { margin-left: 0.35rem; color: var(--bs-body-color); }
 .rule-row { padding: 0.85rem 0; border-bottom: 1px solid var(--bs-border-color); }
 .rule-row:last-of-type { border-bottom: 0; }
 .empty-rules { margin-top: 0.75rem; padding: 0.7rem 0.8rem; border-left: 3px solid var(--bs-warning); background: var(--bs-warning-bg-subtle); color: var(--bs-warning-text-emphasis); font-size: 0.85rem; }
 .preview-panel { padding: 0.85rem; border: 1px solid var(--bs-info-border-subtle); border-radius: 6px; background: var(--bs-info-bg-subtle); }
 .ruleset-preview { max-height: 260px; overflow: auto; padding: 0.75rem; border: 1px solid var(--bs-border-color); background: var(--bs-tertiary-bg); font-size: 0.75rem; white-space: pre-wrap; }
-@media (max-width: 768px) { .network-policy-overlay { padding: 0.5rem; } .policy-context { grid-template-columns: 1fr 1fr; } .policy-context-item:nth-child(3) { border-left: 0; border-top: 1px solid var(--bs-border-color); } .policy-context-item:nth-child(4) { border-top: 1px solid var(--bs-border-color); } }
-@media (max-width: 460px) { .network-policy-overlay { padding: 0; } .network-policy-workbench { min-height: 100%; } .policy-context { grid-template-columns: 1fr; } .policy-context-item { border-left: 0; border-top: 1px solid var(--bs-border-color); } .policy-context-item:first-child { border-top: 0; } }
+@media (max-width: 768px) { .network-policy-overlay { padding: 0.5rem; } .network-policy-dialog { align-items: flex-start; } }
+@media (max-width: 460px) { .network-policy-overlay { padding: 0; } .network-policy-card { min-height: 100vh; border-radius: 0 !important; } }
 </style>

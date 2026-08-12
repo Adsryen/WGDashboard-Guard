@@ -14,6 +14,7 @@ import PeerIntersectionObserver from "@/components/configurationComponents/peerI
 import ConfigurationDescription from "@/components/configurationComponents/configurationDescription.vue";
 import PeerDetailsModal from "@/components/configurationComponents/peerDetailsModal.vue";
 import {parseCidr} from "cidr-tools";
+import {createPolicyTarget} from "@/components/networkPolicy/policyTarget.js";
 
 // Async Components
 const PeerSearchBar = defineAsyncComponent(() => import("@/components/configurationComponents/peerSearchBar.vue"))
@@ -32,6 +33,7 @@ const configurationPeers = ref([])
 const highlightedPeerId = ref("")
 const configurationToggling = ref(false)
 const configurationModalSelectedPeer = ref({})
+const networkPolicyTarget = ref(null)
 const configurationModals = ref({
 	peerNew: {
 		modalOpen: false	
@@ -437,7 +439,7 @@ watch(() => route.query.peer || route.query.id, (newValue) => {
 				      @qrcode="configurationModalSelectedPeer = peer; configurationModals.peerQRCode.modalOpen = true;"
 				      @configurationFile="configurationModalSelectedPeer = peer; configurationModals.peerConfigurationFile.modalOpen = true;"
 				      @assign="configurationModalSelectedPeer = peer; configurationModals.assignPeer.modalOpen = true;"
-				      @networkPolicy="configurationModalSelectedPeer = peer; configurationModals.networkPolicy.modalOpen = true;"
+				      @networkPolicy="networkPolicyTarget = createPolicyTarget({peer, configurationName: configurationInfo.Name}); configurationModals.networkPolicy.modalOpen = true;"
 				></Peer>
 			</div>
 		</TransitionGroup>
@@ -501,15 +503,13 @@ watch(() => route.query.peer || route.query.id, (newValue) => {
 			@close="configurationModals.peerDetails.modalOpen = false"
 		>
 		</PeerDetailsModal>
-		<NetworkPolicyModal
-			key="NetworkPolicyModal"
-			v-if="configurationModals.networkPolicy.modalOpen"
-			:selectedPeer="configurationModalSelectedPeer"
-			:configurationName="configurationInfo.Name"
-			@changed="fetchPeerList"
-			@close="configurationModals.networkPolicy.modalOpen = false"
-		></NetworkPolicyModal>
 	</TransitionGroup>
+	<NetworkPolicyModal
+		v-if="configurationModals.networkPolicy.modalOpen && networkPolicyTarget"
+		:target="networkPolicyTarget"
+		@changed="fetchPeerList"
+		@close="configurationModals.networkPolicy.modalOpen = false"
+	></NetworkPolicyModal>
 	<PeerIntersectionObserver
 		:showPeersCount="showPeersCount"
 		:peerListLength="searchPeers.length"

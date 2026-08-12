@@ -81,12 +81,20 @@ const ruleSummary = (row) => {
 };
 const formatDate = (value) => value ? new Date(value.replace(" ", "T") + "Z").toLocaleString() : "-";
 const canOpenPolicy = (row) => row.peer_present && row.eligible;
+const peerTunnelAddresses = (row) => rows.value
+	.filter(candidate => candidate.peer_present
+		&& candidate.eligible
+		&& candidate.configuration_name === row.configuration_name
+		&& candidate.peer_public_key === row.peer_public_key)
+	.map(candidate => candidate.tunnel_address)
+	.filter(Boolean);
 const openPolicy = (row) => {
 	if (!canOpenPolicy(row)) return;
 	selectedTarget.value = createPolicyTarget({
 		peer: row,
 		configurationName: row.configuration_name,
-		tunnelAddress: row.tunnel_address
+		tunnelAddress: row.tunnel_address,
+		tunnelAddresses: peerTunnelAddresses(row)
 	});
 	policyModalOpen.value = true;
 };

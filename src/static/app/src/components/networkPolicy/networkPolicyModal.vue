@@ -33,11 +33,15 @@ export default {
 	},
 	computed: {
 		tunnelAddresses(){
-			return String(this.target.peer?.allowed_ip || "")
+			const explicitAddresses = Array.isArray(this.target.tunnelAddresses)
+				? this.target.tunnelAddresses
+				: [];
+			const peerAddresses = String(this.target.peer?.allowed_ip || "")
 				.split(",")
 				.map(value => value.trim())
 				.filter(value => /\/(32|128)$/.test(value))
-				.map(value => value.replace(/\/(32|128)$/, ""))
+				.map(value => value.replace(/\/(32|128)$/, ""));
+			return [...new Set([...explicitAddresses, ...peerAddresses].filter(Boolean))];
 		},
 		canManage(){
 			return this.capabilities?.capabilities?.supported === true && !this.loading && !this.applying
@@ -278,9 +282,9 @@ export default {
 					<span><LocaleText t="Configuration" /></span>
 					<code>{{ target.configurationName || "-" }}</code>
 				</div>
-				<div class="policy-context-item">
+				<div class="policy-context-item policy-context-address">
 					<span><LocaleText t="Peer tunnel address" /></span>
-					<select class="form-select form-select-sm" v-model="tunnelAddress" :disabled="tunnelAddresses.length < 2">
+					<select class="form-select form-select-sm" v-model="tunnelAddress" :disabled="loading || tunnelAddresses.length === 0">
 						<option v-for="address in tunnelAddresses" :key="address" :value="address">{{ address }}</option>
 					</select>
 				</div>
@@ -381,20 +385,21 @@ export default {
 
 <style scoped>
 .network-policy-overlay { position: fixed !important; inset: 0; z-index: 9999; overflow-y: auto; padding: 1rem; background-color: #00000060; backdrop-filter: blur(1px); -webkit-backdrop-filter: blur(1px); }
-.network-policy-workbench { width: min(920px, 100%); min-height: 0; margin: 0 auto; }
+.network-policy-workbench { width: min(860px, 100%); min-height: 0; margin: 0 auto; border: 1px solid var(--bs-border-color); border-radius: 8px; }
 .policy-heading { display: flex; align-items: center; gap: 0.75rem; }
-.policy-heading-icon { display: grid; place-items: center; width: 2.4rem; height: 2.4rem; border: 1px solid var(--bs-primary-border-subtle); border-radius: 6px; color: var(--bs-primary); background: var(--bs-primary-bg-subtle); }
-.policy-context { display: grid; grid-template-columns: minmax(150px, 1.25fr) repeat(3, minmax(120px, 1fr)); border: 1px solid var(--bs-border-color); border-radius: 6px; overflow: hidden; }
-.policy-context-item { min-width: 0; padding: 0.6rem 0.75rem; border-left: 1px solid var(--bs-border-color); }
-.policy-context-item:first-child { border-left: 0; }
-.policy-context-item > span { display: block; margin-bottom: 0.2rem; color: var(--bs-secondary-color); font-size: 0.7rem; font-weight: 600; text-transform: uppercase; }
+.policy-heading-icon { display: grid; place-items: center; width: 2.5rem; height: 2.5rem; border: 1px solid var(--bs-primary-border-subtle); border-radius: 6px; color: var(--bs-primary); background: var(--bs-primary-bg-subtle); }
+.policy-context { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 1px; border: 1px solid var(--bs-border-color); border-radius: 6px; overflow: hidden; background: var(--bs-border-color); }
+.policy-context-item { min-width: 0; padding: 0.7rem 0.85rem; background: var(--bs-body-bg); }
+.policy-context-address { background: var(--bs-tertiary-bg); }
+.policy-context-item > span { display: block; margin-bottom: 0.3rem; color: var(--bs-secondary-color); font-size: 0.72rem; font-weight: 600; }
 .policy-context-item strong, .policy-context-item code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.policy-section { padding: 1rem; border: 1px solid var(--bs-border-color); border-radius: 6px; }
+.policy-context-item select { min-height: 2rem; font-family: var(--bs-font-monospace); }
+.policy-section { padding: 1rem; border: 1px solid var(--bs-border-color); border-radius: 6px; background: var(--bs-tertiary-bg); }
 .rule-row { padding: 0.85rem 0; border-bottom: 1px solid var(--bs-border-color); }
 .rule-row:last-of-type { border-bottom: 0; }
 .empty-rules { margin-top: 0.75rem; padding: 0.7rem 0.8rem; border-left: 3px solid var(--bs-warning); background: var(--bs-warning-bg-subtle); color: var(--bs-warning-text-emphasis); font-size: 0.85rem; }
 .preview-panel { padding: 0.85rem; border: 1px solid var(--bs-info-border-subtle); border-radius: 6px; background: var(--bs-info-bg-subtle); }
 .ruleset-preview { max-height: 260px; overflow: auto; padding: 0.75rem; border: 1px solid var(--bs-border-color); background: var(--bs-tertiary-bg); font-size: 0.75rem; white-space: pre-wrap; }
-@media (max-width: 768px) { .network-policy-overlay { padding: 0.5rem; } .policy-context { grid-template-columns: 1fr 1fr; } .policy-context-item:nth-child(3) { border-left: 0; border-top: 1px solid var(--bs-border-color); } .policy-context-item:nth-child(4) { border-top: 1px solid var(--bs-border-color); } }
+@media (max-width: 768px) { .network-policy-overlay { padding: 0.5rem; } }
 @media (max-width: 460px) { .network-policy-overlay { padding: 0; } .network-policy-workbench { min-height: 100%; } .policy-context { grid-template-columns: 1fr; } .policy-context-item { border-left: 0; border-top: 1px solid var(--bs-border-color); } .policy-context-item:first-child { border-top: 0; } }
 </style>

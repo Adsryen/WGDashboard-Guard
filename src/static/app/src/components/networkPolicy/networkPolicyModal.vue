@@ -4,7 +4,7 @@ import {DashboardConfigurationStore} from "@/stores/DashboardConfigurationStore.
 import LocaleText from "@/components/text/localeText.vue";
 import {GetLocale} from "@/utilities/locale.js";
 
-const emptyPolicy = () => ({managed: true, rules: []});
+const emptyPolicy = () => ({managed: false, rules: []});
 
 export default {
 	name: "networkPolicyModal",
@@ -49,6 +49,17 @@ export default {
 		canManage(){
 			return this.capabilities?.capabilities?.supported === true && !this.loading && !this.applying
 		},
+		canReview(){
+			return this.policy.managed && this.policy.rules.length > 0 && this.policy.rules.every((rule) => {
+				if (!rule.destination || !rule.protocol) return false;
+				if (rule.ports === null) return true;
+				return Number.isInteger(rule.ports?.from) && Number.isInteger(rule.ports?.to)
+					&& rule.ports.from >= 1 && rule.ports.to >= rule.ports.from && rule.ports.to <= 65535;
+			});
+		},
+		allPortsRuleCount(){
+			return this.policy.rules.filter((rule) => rule.ports === null).length;
+		},
 		primaryActionLabel(){
 			return this.previewRequired ? "Review changes" : "Apply reviewed changes"
 		},
@@ -79,10 +90,6 @@ export default {
 			if (this.hasUnappliedChanges) return "bi bi-pencil-square"
 			if (this.hasPersistedPolicy && this.policy.managed) return "bi bi-shield-check"
 			return "bi bi-shield"
-		},
-		peerKey(){
-			const key = this.target.peer?.id || ""
-			return key.length > 26 ? `${key.slice(0, 12)}...${key.slice(-10)}` : key
 		},
 		policyModeDescription(){
 			return this.policy.managed
@@ -169,6 +176,22 @@ export default {
 		setAllPorts(rule, enabled){
 			rule.ports = enabled ? null : {from: null, to: null};
 		},
+		async copyPeerKey(){
+			const peerKey = this.target.peer?.id || "";
+			if (!peerKey) return;
+			try {
+				await navigator.clipboard.writeText(peerKey);
+				this.store.newMessage("WGDashboard", GetLocale("Peer public key copied"), "success");
+			} catch (_) {
+				const input = document.createElement("textarea");
+				input.value = peerKey;
+				document.body.appendChild(input);
+				input.select();
+				document.execCommand("copy");
+				input.remove();
+				this.store.newMessage("WGDashboard", GetLocale("Peer public key copied"), "success");
+			}
+		},
 		async preview(){
 			this.error = "";
 			if (!this.tunnelAddress){
@@ -186,6 +209,7 @@ export default {
 			});
 		},
 		async runPrimaryAction(){
+			if (!this.canReview) return;
 			if (this.previewRequired){
 				await this.preview()
 			}else{
@@ -288,7 +312,13 @@ export default {
 						<option v-for="address in tunnelAddresses" :key="address" :value="address">{{ address }}</option>
 					</select>
 				</label>
-				<code class="policy-key" :title="target.peer.id">{{ peerKey }}</code>
+				<div class="policy-key-row">
+					<div class="min-w-0">
+						<span class="policy-field-label"><LocaleText t="Peer public key" /></span>
+						<code class="policy-key" :title="target.peer.id">{{ target.peer.id }}</code>
+					</div>
+					<button type="button" class="btn btn-sm btn-outline-secondary policy-copy-button" :title="GetLocale('Copy peer public key')" @click="copyPeerKey"><i class="bi bi-copy"></i><span class="ms-1"><LocaleText t="Copy" /></span></button>
+				</div>
 			</section>
 
 			<div class="policy-state mb-3" :class="changeStateClass">
@@ -312,14 +342,15 @@ export default {
 				</div>
 			</section>
 
-			<section v-if="policy.managed" class="policy-section policy-rules-section mb-3">
+			<section class="policy-section policy-rules-section mb-3" :class="{'policy-section-disabled': !policy.managed}">
 				<div class="d-flex align-items-center gap-2 mb-1">
 					<div>
 						<h6 class="mb-0"><LocaleText t="Allowed destinations" /></h6>
 						<div class="small text-muted"><LocaleText t="Add each network service this Peer may reach." /></div>
 					</div>
-					<button type="button" class="btn btn-sm btn-outline-primary ms-auto" :title="GetLocale('Add rule')" @click="addRule"><i class="bi bi-plus-lg"></i><span class="ms-1"><LocaleText t="Add rule" /></span></button>
+					<button type="button" class="btn btn-sm btn-outline-primary ms-auto" :disabled="!policy.managed" :title="GetLocale('Add rule')" @click="addRule"><i class="bi bi-plus-lg"></i><span class="ms-1"><LocaleText t="Add rule" /></span></button>
 				</div>
+				<fieldset :disabled="!policy.managed" class="policy-rules-fieldset">
 				<div v-for="(rule, index) in policy.rules" :key="index" class="rule-row">
 					<div class="row g-2 align-items-end">
 						<div class="col-12 col-md-5">
@@ -335,13 +366,15 @@ export default {
 							<div v-if="rule.ports === null" class="form-control text-muted"><LocaleText t="All ports"></LocaleText></div>
 							<div v-else class="d-flex gap-1"><input class="form-control" type="number" min="1" max="65535" v-model.number="rule.ports.from" :placeholder="GetLocale('From')"><input class="form-control" type="number" min="1" max="65535" v-model.number="rule.ports.to" :placeholder="GetLocale('To')"></div>
 						</div>
-						<div class="col-1 col-md-2 d-flex justify-content-end gap-1">
-							<button type="button" class="btn btn-sm btn-outline-secondary" :title="GetLocale(rule.ports === null ? 'Use port range' : 'Allow all ports')" @click="setAllPorts(rule, rule.ports !== null)"><i :class="rule.ports === null ? 'bi bi-list-ol' : 'bi bi-infinity'"></i></button>
-							<button type="button" class="btn btn-sm btn-outline-danger" :title="GetLocale('Remove rule')" @click="removeRule(index)"><i class="bi bi-trash"></i></button>
+						<div class="col-1 col-md-2 d-flex justify-content-end gap-1 rule-actions">
+							<button type="button" class="btn btn-outline-secondary" :title="GetLocale(rule.ports === null ? 'Use port range' : 'Allow all ports')" @click="setAllPorts(rule, rule.ports !== null)"><i :class="rule.ports === null ? 'bi bi-list-ol' : 'bi bi-infinity'"></i></button>
+							<button type="button" class="btn btn-outline-danger" :title="GetLocale('Remove rule')" @click="removeRule(index)"><i class="bi bi-trash"></i></button>
 						</div>
 					</div>
 				</div>
-				<div v-if="policy.rules.length === 0" class="empty-rules"><i class="bi bi-exclamation-triangle me-2"></i><LocaleText t="No destination is allowed. Applying this policy denies all forwarded traffic for this Peer." /></div>
+				</fieldset>
+				<div v-if="!policy.managed" class="empty-rules empty-rules-muted"><i class="bi bi-slash-circle me-2"></i><LocaleText t="Enable forwarded access control to configure allowed destinations." /></div>
+				<div v-else-if="policy.rules.length === 0" class="empty-rules"><i class="bi bi-exclamation-triangle me-2"></i><LocaleText t="No destination is allowed. Applying this policy denies all forwarded traffic for this Peer." /></div>
 			</section>
 
 			<section class="policy-actions">
@@ -350,7 +383,7 @@ export default {
 					<div class="small text-muted"><LocaleText t="Review the rules, then confirm before applying them to the gateway." /></div>
 				</div>
 				<div class="d-flex flex-wrap gap-2">
-					<button type="button" class="btn btn-primary" :disabled="!canManage" @click="runPrimaryAction"><i :class="[primaryActionIcon, 'me-1']"></i><LocaleText :t="primaryActionLabel"></LocaleText></button>
+					<button type="button" class="btn btn-primary" :disabled="!canManage || !canReview" @click="runPrimaryAction"><i :class="[primaryActionIcon, 'me-1']"></i><LocaleText :t="primaryActionLabel"></LocaleText></button>
 					<button v-if="hasUnappliedChanges || previewRuleset" type="button" class="btn btn-outline-secondary" :disabled="applying" @click="resetChanges"><i class="bi bi-arrow-counterclockwise me-1"></i><LocaleText t="Discard changes"></LocaleText></button>
 					<div v-if="hasPersistedPolicy && policy.managed" class="ms-sm-auto d-flex gap-2">
 						<button v-if="!disableConfirmation" type="button" class="btn btn-outline-danger" :disabled="!canManage" @click="requestDeactivate"><i class="bi bi-shield-x me-1"></i><LocaleText t="Disable policy"></LocaleText></button>
@@ -363,6 +396,12 @@ export default {
 			<div v-if="previewRuleset" class="preview-panel mt-3">
 				<div class="d-flex align-items-center gap-2 small fw-bold mb-1"><i class="bi bi-eye"></i><LocaleText t="Generated nftables rules" /> <code class="text-muted">{{ previewHash }}</code></div>
 				<div class="small text-muted mb-2"><LocaleText t="These are the exact rules that will be applied after confirmation." /></div>
+				<div class="policy-checks small mb-2">
+					<div><i class="bi bi-check-circle-fill text-success me-2"></i><LocaleText t="nftables syntax check passed in an isolated temporary table. No live forwarding rule was changed." /></div>
+					<div><i class="bi bi-shield-check text-primary me-2"></i><LocaleText t="Scope is limited to forwarded traffic from this Peer. Gateway SSH and WireGuard listener traffic are not changed." /></div>
+					<div v-if="allPortsRuleCount" class="text-warning-emphasis"><i class="bi bi-exclamation-triangle-fill me-2"></i><LocaleText t="One or more rules allow all ports. Confirm that this broad access is intended." /></div>
+					<div><i class="bi bi-shield-x text-warning-emphasis me-2"></i><LocaleText t="All other forwarded traffic from this Peer will be denied after application." /></div>
+				</div>
 				<pre class="ruleset-preview mb-0">{{ previewRuleset }}</pre>
 			</div>
 
@@ -395,16 +434,25 @@ export default {
 .policy-target-meta code { margin-left: 0.3rem; color: var(--bs-body-color); }
 .policy-address-control { min-width: 0; }
 .policy-address-control select { min-height: 2.25rem; font-family: var(--bs-font-monospace); }
-.policy-key { grid-column: 1 / -1; overflow: hidden; padding-top: 0.75rem; border-top: 1px solid var(--bs-border-color); color: var(--bs-secondary-color); font-size: 0.72rem; text-overflow: ellipsis; white-space: nowrap; }
+.policy-key-row { grid-column: 1 / -1; display: flex; align-items: end; gap: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--bs-border-color); }
+.policy-key-row > div { min-width: 0; flex: 1; }
+.policy-key { display: block; overflow-wrap: anywhere; color: var(--bs-secondary-color); font-size: 0.72rem; line-height: 1.45; }
+.policy-copy-button { flex: 0 0 auto; }
 .policy-state { display: flex; align-items: flex-start; gap: 0.65rem; padding: 0.75rem 0.9rem; border: 1px solid var(--bs-border-color); border-radius: 7px; font-size: 0.86rem; }
 .policy-state > i { margin-top: 0.1rem; }
 .policy-section { padding: 1rem; border: 1px solid var(--bs-border-color); border-radius: 7px; background: var(--bs-tertiary-bg); }
 .policy-switch-section { background: var(--bs-body-bg); }
 .policy-rules-section { padding-bottom: 0.4rem; }
+.policy-rules-fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.policy-section-disabled { opacity: 0.62; }
 .rule-row { padding: 0.85rem 0; border-bottom: 1px solid var(--bs-border-color); }
 .rule-row:last-of-type { border-bottom: 0; }
+.rule-row .form-control, .rule-row .form-select, .rule-actions .btn { min-height: 2.375rem; }
+.rule-actions .btn { display: inline-grid; width: 2.375rem; place-items: center; padding: 0; }
 .empty-rules { margin-top: 0.75rem; padding: 0.7rem 0.8rem; border-left: 3px solid var(--bs-warning); background: var(--bs-warning-bg-subtle); color: var(--bs-warning-text-emphasis); font-size: 0.85rem; }
+.empty-rules-muted { border-left-color: var(--bs-secondary-color); background: var(--bs-secondary-bg); color: var(--bs-secondary-color); }
 .preview-panel { padding: 0.85rem; border: 1px solid var(--bs-info-border-subtle); border-radius: 6px; background: var(--bs-info-bg-subtle); }
+.policy-checks { display: grid; gap: 0.4rem; padding: 0.7rem; border: 1px solid var(--bs-border-color); border-radius: 6px; background: var(--bs-body-bg); }
 .ruleset-preview { max-height: 260px; overflow: auto; padding: 0.75rem; border: 1px solid var(--bs-border-color); background: var(--bs-tertiary-bg); font-size: 0.75rem; white-space: pre-wrap; }
 @media (max-width: 768px) { .network-policy-overlay { padding: 0.5rem; } .policy-target { grid-template-columns: 1fr; gap: 0.85rem; } }
 @media (max-width: 460px) { .network-policy-overlay { padding: 0; } .network-policy-workbench { min-height: 100%; border-radius: 0; } }

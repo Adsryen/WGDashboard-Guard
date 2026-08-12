@@ -514,6 +514,15 @@
 	"Review the generated rules below, then confirm application.": "请核对下方生成的规则，再确认应用。",
 	"Review the rules, then confirm before applying them to the gateway.": "请先核对规则，确认后再应用到网关。",
 	"These are the exact rules that will be applied after confirmation.": "确认后将准确应用以下规则。",
+	"Peer public key": "端点公钥",
+	"Copy": "复制",
+	"Copy peer public key": "复制端点公钥",
+	"Peer public key copied": "端点公钥已复制",
+	"Enable forwarded access control to configure allowed destinations.": "启用转发访问控制后，才能配置允许访问的目标。",
+	"nftables syntax check passed in an isolated temporary table. No live forwarding rule was changed.": "已在隔离的临时表中通过 nftables 语法检查，未改动任何在线转发规则。",
+	"Scope is limited to forwarded traffic from this Peer. Gateway SSH and WireGuard listener traffic are not changed.": "规则仅作用于此端点的转发流量，不会改动网关 SSH 或 WireGuard 监听流量。",
+	"One or more rules allow all ports. Confirm that this broad access is intended.": "有一条或多条规则允许所有端口，请确认这是预期的宽泛授权。",
+	"All other forwarded traffic from this Peer will be denied after application.": "应用后，此端点其余所有转发流量都会被拒绝。",
 	"Actions": "操作",
 	"Loading...": "加载中..."
 }

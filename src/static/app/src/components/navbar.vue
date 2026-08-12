@@ -91,6 +91,13 @@ export default {
 						</RouterLink>
 					</li>
 					<li class="nav-item">
+						<RouterLink class="nav-link rounded-3" to="/network-policies"
+						            active-class="active">
+							<i class="bi bi-shield-lock me-2"></i>
+							<LocaleText t="Network Policies"></LocaleText>
+						</RouterLink>
+					</li>
+					<li class="nav-item">
 						<RouterLink class="nav-link rounded-3" to="/webhooks"
 									active-class="active">
 							<i class="bi bi-postcard me-2"></i>

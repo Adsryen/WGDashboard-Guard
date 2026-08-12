@@ -9,7 +9,10 @@ const emptyPolicy = () => ({managed: true, rules: []});
 export default {
 	name: "networkPolicyModal",
 	components: {LocaleText},
-	props: {selectedPeer: Object},
+	props: {
+		selectedPeer: Object,
+		configurationName: {type: String, default: ""}
+	},
 	emits: ["close"],
 	data(){
 		return {
@@ -58,9 +61,12 @@ export default {
 	},
 	methods: {
 		GetLocale,
+		getConfigurationName(){
+			return this.configurationName || this.$route.params.id
+		},
 		basePayload(){
 			return {
-				configuration_name: this.$route.params.id,
+				configuration_name: this.getConfigurationName(),
 				peer_public_key: this.selectedPeer.id,
 				tunnel_address: this.tunnelAddress,
 				managed: this.policy.managed,

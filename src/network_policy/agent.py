@@ -10,6 +10,7 @@ import argparse
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import re
 import shutil
 import socket
 import stat
@@ -130,9 +131,14 @@ class NftablesExecutor:
             result = self.runner([self.nft_path, "list", "table", TABLE_FAMILY, TABLE_NAME], None)
         except (OSError, subprocess.TimeoutExpired) as error:
             return {"capabilities": capabilities.to_payload(), "table_present": False, "message": str(error)}
+        loaded_hash = None
+        if result.returncode == 0:
+            match = re.search(r'wgd-policy:([a-f0-9]{64})', result.stdout)
+            loaded_hash = match.group(1) if match else None
         return {
             "capabilities": capabilities.to_payload(),
             "table_present": result.returncode == 0,
+            "ruleset_hash": loaded_hash,
         }
 
 

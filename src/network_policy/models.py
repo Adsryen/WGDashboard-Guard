@@ -145,6 +145,24 @@ class NetworkPolicyRepository:
             rows = connection.execute(statement).mappings().fetchall()
         return [self._deserialize(row["PolicyJson"]) for row in rows]
 
+    def current_records(self) -> list[dict[str, Any]]:
+        """Return the current persisted policy for each binding for dashboard inventory views."""
+        with self.engine.connect() as connection:
+            rows = connection.execute(self.policies.select()).mappings().fetchall()
+        return [
+            {
+                "policy_id": row["PolicyID"],
+                "policy": self._deserialize(row["PolicyJson"]),
+                "managed": bool(row["Managed"]),
+                "version": row["Version"],
+                "last_apply_status": row["LastApplyStatus"],
+                "binding_status": row["BindingStatus"],
+                "last_apply_at": row["LastApplyAt"],
+                "updated_at": row["UpdatedAt"],
+            }
+            for row in rows
+        ]
+
     def mark_applied(
         self,
         candidate: PolicyCandidate,

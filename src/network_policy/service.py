@@ -8,6 +8,7 @@ import socket
 from typing import Any
 
 from .agent_protocol import AgentProtocolError, AgentRequest, MAX_MESSAGE_BYTES, decode_message, encode_message
+from .compiler import policy_hash
 from .models import NetworkPolicyRepository
 from .validation import NetworkPolicy, PolicyValidationError, validate_policy
 
@@ -76,6 +77,91 @@ class NetworkPolicyService:
 
     def details(self, configuration_name: str, peer_public_key: str, tunnel_address: str) -> dict[str, Any]:
         return self.repository.details(configuration_name, peer_public_key, tunnel_address)
+
+    def overview(self, peers: list[dict[str, Any]]) -> dict[str, Any]:
+        """Join live Peers with persisted policies without making unmanaged Peers restrictive."""
+        records = self.repository.current_records()
+        bindings = {
+            (record["policy"].configuration_name, record["policy"].peer_public_key, record["policy"].tunnel_address): record
+            for record in records
+        }
+        rows: list[dict[str, Any]] = []
+        live_bindings = set()
+
+        for peer in peers:
+            binding = (peer["configuration_name"], peer["peer_public_key"], peer.get("tunnel_address") or "")
+            if not peer.get("eligible"):
+                rows.append({**peer, "policy_status": "ineligible", "rules": [], "rule_count": 0})
+                continue
+
+            live_bindings.add(binding)
+            record = bindings.get(binding)
+            if record is None:
+                rows.append({**peer, "policy_status": "unmanaged", "rules": [], "rule_count": 0})
+                continue
+
+            policy = record["policy"]
+            if record["binding_status"] != "bound":
+                status = "orphaned"
+            elif record["managed"]:
+                status = "managed"
+            else:
+                status = "disabled"
+            rows.append(
+                {
+                    **peer,
+                    "policy_status": status,
+                    "rules": [rule.to_payload() for rule in policy.rules],
+                    "rule_count": len(policy.rules),
+                    "version": record["version"],
+                    "last_apply_status": record["last_apply_status"],
+                    "last_apply_at": record["last_apply_at"],
+                    "updated_at": record["updated_at"],
+                }
+            )
+
+        for record in records:
+            policy = record["policy"]
+            binding = (policy.configuration_name, policy.peer_public_key, policy.tunnel_address)
+            if binding in live_bindings:
+                continue
+            rows.append(
+                {
+                    "configuration_name": policy.configuration_name,
+                    "peer_public_key": policy.peer_public_key,
+                    "peer_name": "",
+                    "peer_status": "unknown",
+                    "allowed_ip": policy.tunnel_address,
+                    "tunnel_address": policy.tunnel_address,
+                    "eligible": False,
+                    "peer_present": False,
+                    "policy_status": "orphaned",
+                    "rules": [rule.to_payload() for rule in policy.rules],
+                    "rule_count": len(policy.rules),
+                    "version": record["version"],
+                    "last_apply_status": record["last_apply_status"],
+                    "last_apply_at": record["last_apply_at"],
+                    "updated_at": record["updated_at"],
+                }
+            )
+
+        active = [record["policy"] for record in records if record["managed"] and record["binding_status"] == "bound"]
+        runtime = {"status": "not_applicable"}
+        if active:
+            expected_hash = policy_hash(active)
+            try:
+                status = self.agent_client.request("status")
+                runtime = {
+                    "status": "in_sync" if status.get("ruleset_hash") == expected_hash else "out_of_sync",
+                    "hash": expected_hash,
+                }
+            except NetworkPolicyServiceError as error:
+                runtime = {"status": "unavailable", "message": str(error)}
+
+        return {
+            "rows": sorted(rows, key=lambda row: (row["configuration_name"], row["peer_name"] or row["peer_public_key"], row["tunnel_address"])),
+            "runtime": runtime,
+        }
 
     def _desired_policies(self, policy: NetworkPolicy, policy_id: str | None = None) -> list[NetworkPolicy]:
         policies = self.repository.active_except({policy_id} if policy_id else None)

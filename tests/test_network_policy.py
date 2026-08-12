@@ -111,6 +111,55 @@ class NetworkPolicyProtocolTest(unittest.TestCase):
             AgentRequest.from_payload({"version": 1, "action": "status", "policies": []})
 
 
+@unittest.skipIf(db is None, "SQLAlchemy is required for Dashboard persistence tests")
+class NetworkPolicyOverviewTest(unittest.TestCase):
+    def test_unmanaged_peer_stays_unmanaged_and_orphan_is_visible(self):
+        managed = validate_policy(policy_payload())
+
+        class Repository:
+            def current_records(self):
+                return [{
+                    "policy_id": "known-policy",
+                    "policy": managed,
+                    "managed": True,
+                    "version": 1,
+                    "last_apply_status": "applied",
+                    "binding_status": "bound",
+                    "last_apply_at": None,
+                    "updated_at": None,
+                }]
+
+        service = NetworkPolicyService.__new__(NetworkPolicyService)
+        service.repository = Repository()
+        service.agent_client = FakePolicyAgent()
+        overview = service.overview([
+            {
+                "configuration_name": "wg0",
+                "peer_public_key": PUBLIC_KEY,
+                "peer_name": "managed-peer",
+                "peer_status": "running",
+                "allowed_ip": "10.8.0.2/32",
+                "tunnel_address": "10.8.0.2",
+                "eligible": True,
+                "peer_present": True,
+            },
+            {
+                "configuration_name": "wg0",
+                "peer_public_key": "b" * 43 + "=",
+                "peer_name": "unmanaged-peer",
+                "peer_status": "running",
+                "allowed_ip": "10.8.0.3/32",
+                "tunnel_address": "10.8.0.3",
+                "eligible": True,
+                "peer_present": True,
+            },
+        ])
+
+        self.assertEqual(["managed", "unmanaged"], [row["policy_status"] for row in overview["rows"]])
+        self.assertEqual([], overview["rows"][1]["rules"])
+        self.assertEqual("out_of_sync", overview["runtime"]["status"])
+
+
 class FakeNftRunner:
     def __init__(self):
         self.calls = []
@@ -142,6 +191,15 @@ class NftablesExecutorTest(unittest.TestCase):
         self.assertEqual(preview["hash"], applied["hash"])
         self.assertTrue(all(command[0] == "nft" for command, _ in runner.calls))
         self.assertFalse(any("shell" in command for command, _ in runner.calls))
+
+    def test_status_returns_the_loaded_policy_hash(self):
+        runner = FakeNftRunner()
+        executor = NftablesExecutor(runner=runner)
+        executor.nft_path = "nft"
+        policy = validate_policy(policy_payload())
+        executor.apply([policy])
+
+        self.assertEqual(policy_hash([policy]), executor.status()["ruleset_hash"])
 
 
 class FakePolicyAgent:

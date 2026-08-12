@@ -932,12 +932,46 @@ def _network_policy_actor() -> str:
     return NetworkPolicyManager.actor_from_session(session.get("username"))
 
 
+def _network_policy_overview_peers() -> list[dict]:
+    """Build non-sensitive live Peer bindings for the policy inventory."""
+    peers = []
+    for configuration in WireguardConfigurations.values():
+        for peer in configuration.Peers:
+            addresses = []
+            for raw_address in str(peer.allowed_ip or "").split(","):
+                try:
+                    network = ipaddress.ip_network(raw_address.strip(), strict=False)
+                except ValueError:
+                    continue
+                if network.num_addresses == 1:
+                    addresses.append(str(network.network_address))
+
+            common = {
+                "configuration_name": configuration.Name,
+                "peer_public_key": peer.id,
+                "peer_name": peer.name or "",
+                "peer_status": peer.status,
+                "allowed_ip": peer.allowed_ip,
+                "peer_present": True,
+            }
+            if addresses:
+                peers.extend({**common, "tunnel_address": address, "eligible": True} for address in addresses)
+            else:
+                peers.append({**common, "tunnel_address": "", "eligible": False})
+    return peers
+
+
 @app.get(f'{APP_PREFIX}/api/networkPolicy/capabilities')
 def API_NetworkPolicyCapabilities() -> ResponseObject:
     try:
         return ResponseObject(data=NetworkPolicyManager.capabilities())
     except NetworkPolicyServiceError as error:
         return ResponseObject(False, str(error), status_code=503)
+
+
+@app.get(f'{APP_PREFIX}/api/networkPolicy/overview')
+def API_NetworkPolicyOverview() -> ResponseObject:
+    return ResponseObject(data=NetworkPolicyManager.overview(_network_policy_overview_peers()))
 
 
 @app.post(f'{APP_PREFIX}/api/networkPolicy/get')

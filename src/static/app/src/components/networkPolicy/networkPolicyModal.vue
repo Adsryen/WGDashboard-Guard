@@ -53,14 +53,12 @@ export default {
 		},
 		canReview(){
 			if (!this.policy.managed) return false;
-			const hasValidRules = this.policy.rules.every((rule) => {
+			return this.policy.rules.every((rule) => {
 				if (!rule.destination || !rule.protocol) return false;
 				if (rule.protocol === "icmp") return rule.ports === null;
 				if (rule.ports === null) return true;
-				return Number.isInteger(rule.ports?.from) && Number.isInteger(rule.ports?.to)
-					&& rule.ports.from >= 1 && rule.ports.to >= rule.ports.from && rule.ports.to <= 65535;
+				return this.rulePortError(rule) === "";
 			});
-			return hasValidRules;
 		},
 		allPortsRuleCount(){
 			return this.policy.rules.filter((rule) => rule.protocol !== "icmp" && rule.ports === null).length;
@@ -135,7 +133,7 @@ export default {
 				peer_public_key: this.target.peer.id,
 				tunnel_address: this.tunnelAddress,
 				managed: this.policy.managed,
-				rules: this.policy.rules
+				rules: this.policy.rules.map((rule) => this.normalizedRule(rule))
 			}
 		},
 		async loadCapabilities(){
@@ -183,6 +181,28 @@ export default {
 		},
 		onProtocolChange(rule){
 			if (rule.protocol === "icmp") rule.ports = null;
+		},
+		normalizedRule(rule){
+			if (rule.ports === null || rule.protocol === "icmp") return {...rule, ports: null};
+			const from = Number(rule.ports?.from);
+			const to = rule.ports?.to === null || rule.ports?.to === ""
+				? from
+				: Number(rule.ports.to);
+			return {...rule, ports: {from, to}};
+		},
+		rulePortError(rule){
+			if (rule.protocol === "icmp" || rule.ports === null) return "";
+			const from = Number(rule.ports?.from);
+			const endValue = rule.ports?.to;
+			if (!Number.isInteger(from) || from < 1 || from > 65535){
+				return GetLocale("Enter a port from 1 to 65535.");
+			}
+			if (endValue === null || endValue === "") return "";
+			const to = Number(endValue);
+			if (!Number.isInteger(to) || to < from || to > 65535){
+				return GetLocale("The end port must be between the start port and 65535.");
+			}
+			return "";
 		},
 		async copyPeerKey(){
 			const peerKey = this.target.peer?.id || "";
@@ -402,7 +422,11 @@ export default {
 							<label class="form-label small"><LocaleText t="Ports"></LocaleText></label>
 							<div v-if="rule.protocol === 'icmp'" class="form-control text-muted"><LocaleText t="No ports for ICMP"></LocaleText></div>
 							<div v-else-if="rule.ports === null" class="form-control text-muted"><LocaleText t="All ports"></LocaleText></div>
-							<div v-else class="d-flex gap-1"><input class="form-control" type="number" min="1" max="65535" v-model.number="rule.ports.from" :placeholder="GetLocale('From')"><input class="form-control" type="number" min="1" max="65535" v-model.number="rule.ports.to" :placeholder="GetLocale('To')"></div>
+							<div v-else>
+								<div class="d-flex gap-1"><input class="form-control" type="number" min="1" max="65535" v-model.number="rule.ports.from" :placeholder="GetLocale('From')"><input class="form-control" type="number" min="1" max="65535" v-model.number="rule.ports.to" :placeholder="GetLocale('To')"></div>
+								<div v-if="rulePortError(rule)" class="invalid-feedback d-block">{{ rulePortError(rule) }}</div>
+								<div v-else class="form-text"><LocaleText t="Leave the end port empty to allow one port." /></div>
+							</div>
 						</div>
 						<div class="col-1 col-md-2 d-flex justify-content-end gap-1 rule-actions">
 							<button v-if="rule.protocol !== 'icmp'" type="button" class="btn btn-outline-secondary" :title="GetLocale(rule.ports === null ? 'Use port range' : 'Allow all ports')" @click="setAllPorts(rule, rule.ports !== null)"><i :class="rule.ports === null ? 'bi bi-list-ol' : 'bi bi-infinity'"></i></button>

@@ -551,6 +551,7 @@ export default {
 .rule-row { padding: 0.85rem 0; border-bottom: 1px solid var(--bs-border-color); }
 .rule-row:last-of-type { border-bottom: 0; }
 .rule-row .form-control, .rule-row .form-select, .rule-actions .btn { min-height: 2.375rem; }
+.rule-actions { align-self: flex-start; padding-top: 1.8125rem; }
 .rule-actions .btn { display: inline-grid; width: 2.375rem; place-items: center; padding: 0; }
 .empty-rules { margin-top: 0.75rem; padding: 0.7rem 0.8rem; border-left: 3px solid var(--bs-warning); background: var(--bs-warning-bg-subtle); color: var(--bs-warning-text-emphasis); font-size: 0.85rem; }
 .empty-rules-muted { border-left-color: var(--bs-secondary-color); background: var(--bs-secondary-bg); color: var(--bs-secondary-color); }

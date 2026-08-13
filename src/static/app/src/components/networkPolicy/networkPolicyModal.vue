@@ -409,7 +409,7 @@ export default {
 				</div>
 				<fieldset :disabled="!policy.managed" class="policy-rules-fieldset">
 				<div v-for="(rule, index) in policy.rules" :key="index" class="rule-row">
-					<div class="row g-2 align-items-end">
+					<div class="row g-2 align-items-start">
 						<div class="col-12 col-md-5">
 							<label class="form-label small"><LocaleText t="Destination IP or CIDR"></LocaleText></label>
 							<input class="form-control" v-model.trim="rule.destination" placeholder="192.168.10.117/32">
@@ -424,13 +424,20 @@ export default {
 							<div v-else-if="rule.ports === null" class="form-control text-muted"><LocaleText t="All ports"></LocaleText></div>
 							<div v-else>
 								<div class="d-flex gap-1"><input class="form-control" type="number" min="1" max="65535" v-model.number="rule.ports.from" :placeholder="GetLocale('From')"><input class="form-control" type="number" min="1" max="65535" v-model.number="rule.ports.to" :placeholder="GetLocale('To')"></div>
-								<div v-if="rulePortError(rule)" class="invalid-feedback d-block">{{ rulePortError(rule) }}</div>
-								<div v-else class="form-text"><LocaleText t="Leave the end port empty to allow one port." /></div>
 							</div>
 						</div>
-						<div class="col-1 col-md-2 d-flex justify-content-end gap-1 rule-actions">
-							<button v-if="rule.protocol !== 'icmp'" type="button" class="btn btn-outline-secondary" :title="GetLocale(rule.ports === null ? 'Use port range' : 'Allow all ports')" @click="setAllPorts(rule, rule.ports !== null)"><i :class="rule.ports === null ? 'bi bi-list-ol' : 'bi bi-infinity'"></i></button>
-							<button type="button" class="btn btn-outline-danger" :title="GetLocale('Remove rule')" @click="removeRule(index)"><i class="bi bi-trash"></i></button>
+						<div class="col-12 col-md-2 rule-actions">
+							<span class="form-label small rule-actions-label" aria-hidden="true">&nbsp;</span>
+							<div class="d-flex justify-content-end gap-1">
+								<button v-if="rule.protocol !== 'icmp'" type="button" class="btn btn-outline-secondary" :title="GetLocale(rule.ports === null ? 'Use port range' : 'Allow all ports')" @click="setAllPorts(rule, rule.ports !== null)"><i :class="rule.ports === null ? 'bi bi-list-ol' : 'bi bi-infinity'"></i></button>
+								<button type="button" class="btn btn-outline-danger" :title="GetLocale('Remove rule')" @click="removeRule(index)"><i class="bi bi-trash"></i></button>
+							</div>
+						</div>
+					</div>
+					<div v-if="rule.protocol !== 'icmp' && rule.ports !== null" class="row g-2">
+						<div class="col-12 col-md-3 offset-md-7 rule-port-help">
+							<div v-if="rulePortError(rule)" class="invalid-feedback d-block">{{ rulePortError(rule) }}</div>
+							<div v-else class="form-text"><LocaleText t="Leave the end port empty to allow one port." /></div>
 						</div>
 					</div>
 				</div>
@@ -551,8 +558,9 @@ export default {
 .rule-row { padding: 0.85rem 0; border-bottom: 1px solid var(--bs-border-color); }
 .rule-row:last-of-type { border-bottom: 0; }
 .rule-row .form-control, .rule-row .form-select, .rule-actions .btn { min-height: 2.375rem; }
-.rule-actions { align-self: flex-start; padding-top: 1.8125rem; }
+.rule-actions-label { display: block; visibility: hidden; }
 .rule-actions .btn { display: inline-grid; width: 2.375rem; place-items: center; padding: 0; }
+.rule-port-help { min-height: 1.35rem; }
 .empty-rules { margin-top: 0.75rem; padding: 0.7rem 0.8rem; border-left: 3px solid var(--bs-warning); background: var(--bs-warning-bg-subtle); color: var(--bs-warning-text-emphasis); font-size: 0.85rem; }
 .empty-rules-muted { border-left-color: var(--bs-secondary-color); background: var(--bs-secondary-bg); color: var(--bs-secondary-color); }
 .preview-panel { padding: 1rem; color: var(--bs-body-color); border: 1px solid var(--bs-border-color); border-radius: 7px; background: var(--bs-tertiary-bg); }

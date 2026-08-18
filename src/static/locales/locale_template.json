@@ -523,23 +523,36 @@
 	"Confirm disable": "",
 	"Review the rules, then confirm before applying them to the gateway.": "",
 	"Apply only after reviewing the generated rules.": "",
-	"These are the exact rules that will be applied after confirmation.": ""
-	,"Peer public key": ""
-	,"Copy": ""
-	,"Copy peer public key": ""
-	,"Peer public key copied": ""
-	,"Control this Peer's forwarded access without changing gateway services.": ""
-	,"Enable forwarded access control to configure allowed destinations.": ""
-	,"nftables syntax check passed in an isolated temporary table. No live forwarding rule was changed.": ""
-	,"Scope is limited to forwarded traffic from this Peer. Gateway SSH and WireGuard listener traffic are not changed.": ""
-	,"One or more rules allow all ports. Confirm that this broad access is intended.": ""
-	,"All other forwarded traffic from this Peer will be denied after application.": ""
-	,"No destination is allowed. Applying this policy denies all forwarded traffic for this Peer.": ""
-	,"Preview the generated rules before applying this policy.": ""
-	,"Select a single-host tunnel address first.": ""
-	,"This Peer needs a single-host Allowed IP before a forwarding policy can be managed.": ""
-	,"No ports for ICMP": ""
-	,"Leave the end port empty to allow one port.": ""
-	,"Enter a port from 1 to 65535.": ""
-	,"The end port must be between the start port and 65535.": ""
+	"These are the exact rules that will be applied after confirmation.": "",
+	"Peer public key": "",
+	"Copy": "",
+	"Copy peer public key": "",
+	"Peer public key copied": "",
+	"Control this Peer's forwarded access without changing gateway services.": "",
+	"Enable forwarded access control to configure allowed destinations.": "",
+	"nftables syntax check passed in an isolated temporary table. No live forwarding rule was changed.": "",
+	"Scope is limited to forwarded traffic from this Peer. Gateway SSH and WireGuard listener traffic are not changed.": "",
+	"One or more rules allow all ports. Confirm that this broad access is intended.": "",
+	"All other forwarded traffic from this Peer will be denied after application.": "",
+	"No destination is allowed. Applying this policy denies all forwarded traffic for this Peer.": "",
+	"Preview the generated rules before applying this policy.": "",
+	"Select a single-host tunnel address first.": "",
+	"This Peer needs a single-host Allowed IP before a forwarding policy can be managed.": "",
+	"No ports for ICMP": "",
+	"Leave the end port empty to allow one port.": "",
+	"Enter a port from 1 to 65535.": "",
+	"The end port must be between the start port and 65535.": "",
+	"Add destination group": "",
+	"Remove destination group": "",
+	"Add port": "",
+	"Add port range": "",
+	"Remove port": "",
+	"Use specific ports": "",
+	"Enter a destination IP or CIDR.": "",
+	"Add at least one port.": "",
+	"All ports cannot be combined with specific ports.": "",
+	"This port overlaps another port in this group.": "",
+	"Port group summary": "",
+	"flattened rules": "",
+	"Duplicate destination and protocol groups are not allowed.": ""
 }

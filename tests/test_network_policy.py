@@ -44,6 +44,18 @@ NETWORK_POLICY_LOCALE_DYNAMIC_KEYS = {
     "Preview ready - confirm to apply",
     "Review changes",
     "Review changes to generate the exact nftables rules.",
+    "Add destination group",
+    "Remove destination group",
+    "Add port",
+    "Add port range",
+    "Remove port",
+    "Use specific ports",
+    "Enter a destination IP or CIDR.",
+    "Add at least one port.",
+    "All ports cannot be combined with specific ports.",
+    "This port overlaps another port in this group.",
+    "Port group summary",
+    "flattened rules",
 }
 
 
@@ -125,6 +137,21 @@ class NetworkPolicyLocaleTest(unittest.TestCase):
 
 
 class NetworkPolicyCompilerTest(unittest.TestCase):
+    def test_compiles_each_discontinuous_tcp_port_as_a_distinct_allow_rule(self):
+        ports = [3000, 5435, 6379, 8848, 9000, 9001, 19530, 27017]
+        policy = validate_policy(policy_payload(rules=[
+            {
+                "destination": "192.168.0.175/32",
+                "protocol": "tcp",
+                "ports": {"from": port, "to": port},
+            }
+            for port in ports
+        ]))
+        ruleset, _ = compile_ruleset([policy])
+
+        for port in ports:
+            self.assertIn(f"ip daddr 192.168.0.175/32 tcp dport {port} accept", ruleset)
+
     def test_compiles_allow_before_per_peer_default_drop(self):
         policy = validate_policy(policy_payload())
         ruleset, digest = compile_ruleset([policy])

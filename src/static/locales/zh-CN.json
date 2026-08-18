@@ -546,5 +546,18 @@
 	"Enter a port from 1 to 65535.": "请输入 1 至 65535 之间的端口。",
 	"The end port must be between the start port and 65535.": "结束端口必须不小于起始端口，且不大于 65535。",
 	"Actions": "操作",
-	"Loading...": "加载中..."
+	"Loading...": "加载中...",
+	"Add destination group": "添加目标组",
+	"Remove destination group": "删除目标组",
+	"Add port": "添加端口",
+	"Add port range": "添加端口范围",
+	"Remove port": "删除端口",
+	"Use specific ports": "使用指定端口",
+	"Enter a destination IP or CIDR.": "请输入目标 IP 或 CIDR。",
+	"Add at least one port.": "请至少添加一个端口。",
+	"All ports cannot be combined with specific ports.": "全部端口不能与指定端口同时使用。",
+	"This port overlaps another port in this group.": "该端口与此组中的另一个端口重叠。",
+	"Port group summary": "端口组摘要",
+	"flattened rules": "条展开规则",
+	"Duplicate destination and protocol groups are not allowed.": "不允许重复的目标地址和协议组。"
 }

@@ -3,8 +3,17 @@ import {fetchGet, fetchPost} from "@/utilities/fetch.js";
 import {DashboardConfigurationStore} from "@/stores/DashboardConfigurationStore.js";
 import LocaleText from "@/components/text/localeText.vue";
 import {GetLocale} from "@/utilities/locale.js";
+import {
+	emptyPort,
+	emptyPortGroup,
+	flattenGroups,
+	groupRules,
+	isPolicyGroupsValid,
+	portLabel,
+	validatePolicyGroups
+} from "@/components/networkPolicy/portGroups.js";
 
-const emptyPolicy = () => ({managed: false, rules: []});
+const emptyPolicy = () => ({managed: false, groups: []});
 
 export default {
 	name: "networkPolicyModal",
@@ -53,15 +62,10 @@ export default {
 		},
 		canReview(){
 			if (!this.policy.managed) return false;
-			return this.policy.rules.every((rule) => {
-				if (!rule.destination || !rule.protocol) return false;
-				if (rule.protocol === "icmp") return rule.ports === null;
-				if (rule.ports === null) return true;
-				return this.rulePortError(rule) === "";
-			});
+			return isPolicyGroupsValid(this.policy.groups);
 		},
 		allPortsRuleCount(){
-			return this.policy.rules.filter((rule) => rule.protocol !== "icmp" && rule.ports === null).length;
+			return this.policy.groups.filter((group) => group.protocol !== "icmp" && group.allPorts).length;
 		},
 		primaryActionLabel(){
 			return this.previewRequired ? "Review changes" : "Apply reviewed changes"
@@ -133,7 +137,7 @@ export default {
 				peer_public_key: this.target.peer.id,
 				tunnel_address: this.tunnelAddress,
 				managed: this.policy.managed,
-				rules: this.policy.rules.map((rule) => this.normalizedRule(rule))
+				rules: flattenGroups(this.policy.groups)
 			}
 		},
 		async loadCapabilities(){
@@ -153,7 +157,10 @@ export default {
 			}
 			await fetchPost("/api/networkPolicy/get", this.basePayload(), (res) => {
 				if (res.status){
-					this.policy = res.data.policy || emptyPolicy();
+					const persistedPolicy = res.data.policy;
+					this.policy = persistedPolicy
+						? {managed: Boolean(persistedPolicy.managed), groups: groupRules(persistedPolicy.rules)}
+						: emptyPolicy();
 					this.hasPersistedPolicy = Boolean(res.data.policy);
 					this.persistedSignature = JSON.stringify(this.policy);
 					this.revisions = res.data.revisions || [];
@@ -165,44 +172,56 @@ export default {
 				this.loading = false;
 			});
 		},
-		addRule(){
-			this.policy.rules.push({destination: "", protocol: "tcp", ports: {from: null, to: null}});
+		addGroup(){
+			this.policy.groups.push(emptyPortGroup());
 		},
 		onManagedChange(){
 			if (!this.policy.managed){
-				this.policy.rules = [];
+				this.policy.groups = [];
 			}
 		},
-		removeRule(index){
-			this.policy.rules.splice(index, 1);
+		removeGroup(index){
+			this.policy.groups.splice(index, 1);
 		},
-		setAllPorts(rule, enabled){
-			rule.ports = enabled ? null : {from: null, to: null};
+		addPort(group, range = false){
+			group.ports.push({...emptyPort(), showRange: range});
 		},
-		onProtocolChange(rule){
-			if (rule.protocol === "icmp") rule.ports = null;
+		removePort(group, index){
+			group.ports.splice(index, 1);
 		},
-		normalizedRule(rule){
-			if (rule.ports === null || rule.protocol === "icmp") return {...rule, ports: null};
-			const from = Number(rule.ports?.from);
-			const to = rule.ports?.to === null || rule.ports?.to === ""
-				? from
-				: Number(rule.ports.to);
-			return {...rule, ports: {from, to}};
-		},
-		rulePortError(rule){
-			if (rule.protocol === "icmp" || rule.ports === null) return "";
-			const from = Number(rule.ports?.from);
-			const endValue = rule.ports?.to;
-			if (!Number.isInteger(from) || from < 1 || from > 65535){
-				return GetLocale("Enter a port from 1 to 65535.");
+		setAllPorts(group, enabled){
+			group.allPorts = enabled;
+			if (enabled){
+				group.ports = [];
+			}else if (!group.ports.length){
+				group.ports = [emptyPort()];
 			}
-			if (endValue === null || endValue === "") return "";
-			const to = Number(endValue);
-			if (!Number.isInteger(to) || to < from || to > 65535){
-				return GetLocale("The end port must be between the start port and 65535.");
+		},
+		onProtocolChange(group){
+			if (group.protocol === "icmp"){
+				group.allPorts = false;
+				group.ports = [];
+			}else if (!group.ports.length){
+				group.allPorts = false;
+				group.ports = [emptyPort()];
 			}
-			return "";
+		},
+		groupValidation(groupIndex){
+			return validatePolicyGroups(this.policy.groups)[groupIndex] || {groupError: "", portErrors: []};
+		},
+		groupError(groupIndex){
+			return this.groupValidation(groupIndex).groupError;
+		},
+		portError(groupIndex, portIndex){
+			return this.groupValidation(groupIndex).portErrors[portIndex] || "";
+		},
+		portGroupSummary(group){
+			if (group.protocol === "icmp") return GetLocale("No ports for ICMP");
+			if (group.allPorts) return GetLocale("All ports");
+			return group.ports.map(portLabel).join(", ");
+		},
+		flattenedRuleCount(group){
+			return flattenGroups([group]).length;
 		},
 		async copyPeerKey(){
 			const peerKey = this.target.peer?.id || "";
@@ -405,45 +424,50 @@ export default {
 						<h6 class="mb-0"><LocaleText t="Allowed destinations" /></h6>
 						<div class="small text-muted"><LocaleText t="Add each network service this Peer may reach." /></div>
 					</div>
-					<button type="button" class="btn btn-sm btn-outline-primary ms-auto" :disabled="!policy.managed" :title="GetLocale('Add rule')" @click="addRule"><i class="bi bi-plus-lg"></i><span class="ms-1"><LocaleText t="Add rule" /></span></button>
+					<button type="button" class="btn btn-sm btn-outline-primary ms-auto" :disabled="!policy.managed || !canManage" :title="GetLocale('Add destination group')" @click="addGroup"><i class="bi bi-plus-lg"></i><span class="ms-1"><LocaleText t="Add destination group" /></span></button>
 				</div>
-				<fieldset :disabled="!policy.managed" class="policy-rules-fieldset">
-				<div v-for="(rule, index) in policy.rules" :key="index" class="rule-row">
+				<fieldset :disabled="!policy.managed || !canManage" class="policy-rules-fieldset">
+				<div v-for="(group, groupIndex) in policy.groups" :key="`${group.destination}-${group.protocol}-${groupIndex}`" class="rule-row policy-port-group">
 					<div class="row g-2 align-items-start">
 						<div class="col-12 col-md-5">
 							<label class="form-label small"><LocaleText t="Destination IP or CIDR"></LocaleText></label>
-							<input class="form-control" v-model.trim="rule.destination" placeholder="192.168.10.117/32">
+							<input class="form-control" :class="{'is-invalid': groupError(groupIndex)}" v-model.trim="group.destination" placeholder="192.168.10.117/32">
 						</div>
 						<div class="col-6 col-md-2">
 							<label class="form-label small"><LocaleText t="Protocol"></LocaleText></label>
-							<select class="form-select" v-model="rule.protocol" @change="onProtocolChange(rule)"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="icmp">ICMP</option></select>
+							<select class="form-select" v-model="group.protocol" @change="onProtocolChange(group)"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="icmp">ICMP</option></select>
 						</div>
-						<div class="col-5 col-md-3">
-							<label class="form-label small"><LocaleText t="Ports"></LocaleText></label>
-							<div v-if="rule.protocol === 'icmp'" class="form-control text-muted"><LocaleText t="No ports for ICMP"></LocaleText></div>
-							<div v-else-if="rule.ports === null" class="form-control text-muted"><LocaleText t="All ports"></LocaleText></div>
-							<div v-else>
-								<div class="d-flex gap-1"><input class="form-control" type="number" min="1" max="65535" v-model.number="rule.ports.from" :placeholder="GetLocale('From')"><input class="form-control" type="number" min="1" max="65535" v-model.number="rule.ports.to" :placeholder="GetLocale('To')"></div>
-							</div>
-						</div>
-						<div class="col-12 col-md-2 rule-actions">
+						<div class="col-6 col-md-5 rule-actions">
 							<span class="form-label small rule-actions-label" aria-hidden="true">&nbsp;</span>
 							<div class="d-flex justify-content-end gap-1">
-								<button v-if="rule.protocol !== 'icmp'" type="button" class="btn btn-outline-secondary" :title="GetLocale(rule.ports === null ? 'Use port range' : 'Allow all ports')" @click="setAllPorts(rule, rule.ports !== null)"><i :class="rule.ports === null ? 'bi bi-list-ol' : 'bi bi-infinity'"></i></button>
-								<button type="button" class="btn btn-outline-danger" :title="GetLocale('Remove rule')" @click="removeRule(index)"><i class="bi bi-trash"></i></button>
+								<button v-if="group.protocol !== 'icmp'" type="button" class="btn btn-outline-secondary" :title="GetLocale(group.allPorts ? 'Use specific ports' : 'Allow all ports')" @click="setAllPorts(group, !group.allPorts)"><i :class="group.allPorts ? 'bi bi-list-ol' : 'bi bi-infinity'"></i></button>
+								<button type="button" class="btn btn-outline-danger" :title="GetLocale('Remove destination group')" @click="removeGroup(groupIndex)"><i class="bi bi-trash"></i></button>
 							</div>
 						</div>
 					</div>
-					<div v-if="rule.protocol !== 'icmp' && rule.ports !== null" class="row g-2">
-						<div class="col-12 col-md-3 offset-md-7 rule-port-help">
-							<div v-if="rulePortError(rule)" class="invalid-feedback d-block">{{ rulePortError(rule) }}</div>
-							<div v-else class="form-text"><LocaleText t="Leave the end port empty to allow one port." /></div>
+					<div v-if="group.protocol === 'icmp'" class="policy-port-empty form-control text-muted"><LocaleText t="No ports for ICMP"></LocaleText></div>
+					<div v-else-if="group.allPorts" class="policy-port-empty form-control text-muted"><LocaleText t="All ports"></LocaleText></div>
+					<div v-else class="policy-port-list">
+						<div v-for="(port, portIndex) in group.ports" :key="portIndex" class="policy-port-row">
+							<div class="policy-port-inputs">
+								<input class="form-control" :class="{'is-invalid': portError(groupIndex, portIndex)}" type="number" min="1" max="65535" v-model.number="port.from" :placeholder="GetLocale('From')">
+								<input v-if="port.showRange" class="form-control" :class="{'is-invalid': portError(groupIndex, portIndex)}" type="number" min="1" max="65535" v-model.number="port.to" :placeholder="GetLocale('To')">
+								<button v-else type="button" class="btn btn-outline-secondary" :title="GetLocale('Use port range')" @click="port.showRange = true"><i class="bi bi-arrows-expand"></i></button>
+							</div>
+							<button type="button" class="btn btn-outline-danger policy-port-remove" :title="GetLocale('Remove port')" @click="removePort(group, portIndex)"><i class="bi bi-trash"></i></button>
+							<div v-if="portError(groupIndex, portIndex)" class="invalid-feedback d-block policy-port-error">{{ GetLocale(portError(groupIndex, portIndex)) }}</div>
 						</div>
+						<div class="policy-port-actions">
+							<button type="button" class="btn btn-sm btn-outline-primary" :title="GetLocale('Add port')" @click="addPort(group)"><i class="bi bi-plus-lg"></i><span class="ms-1"><LocaleText t="Add port" /></span></button>
+							<button type="button" class="btn btn-sm btn-outline-secondary" :title="GetLocale('Add port range')" @click="addPort(group, true)"><i class="bi bi-arrows-expand"></i><span class="ms-1"><LocaleText t="Add port range" /></span></button>
+						</div>
+						<div v-if="groupError(groupIndex)" class="invalid-feedback d-block">{{ GetLocale(groupError(groupIndex)) }}</div>
+						<div v-else class="form-text"><LocaleText t="Leave the end port empty to allow one port." /></div>
 					</div>
 				</div>
 				</fieldset>
 				<div v-if="!policy.managed" class="empty-rules empty-rules-muted"><i class="bi bi-slash-circle me-2"></i><LocaleText t="Enable forwarded access control to configure allowed destinations." /></div>
-				<div v-else-if="policy.rules.length === 0" class="empty-rules"><i class="bi bi-exclamation-triangle me-2"></i><LocaleText t="No destination is allowed. Applying this policy denies all forwarded traffic for this Peer." /></div>
+				<div v-else-if="policy.groups.length === 0" class="empty-rules"><i class="bi bi-exclamation-triangle me-2"></i><LocaleText t="No destination is allowed. Applying this policy denies all forwarded traffic for this Peer." /></div>
 				<div v-else class="small text-muted mt-2"><i class="bi bi-activity me-1"></i><LocaleText t="ICMP diagnostics are allowed for every configured destination." /></div>
 			</section>
 			<section class="policy-tab-actions policy-rules-actions">
@@ -468,6 +492,12 @@ export default {
 					<div v-if="allPortsRuleCount" class="text-warning-emphasis"><i class="bi bi-exclamation-triangle-fill me-2"></i><LocaleText t="One or more rules allow all ports. Confirm that this broad access is intended." /></div>
 					<div><i class="bi bi-shield-x text-warning-emphasis me-2"></i><LocaleText t="All other forwarded traffic from this Peer will be denied after application." /></div>
 					<div><i class="bi bi-activity text-success me-2"></i><LocaleText t="ICMP diagnostics are allowed for every configured destination." /></div>
+				</div>
+				<div class="policy-group-summary mb-2">
+					<strong><LocaleText t="Port group summary" /></strong>
+					<div v-for="(group, groupIndex) in policy.groups" :key="`review-${group.destination}-${group.protocol}-${groupIndex}`" class="policy-group-summary-row">
+						<code>{{ group.destination }}</code><span class="badge text-bg-secondary">{{ group.protocol.toUpperCase() }}</span><span>{{ portGroupSummary(group) }}</span><span class="text-muted">{{ flattenedRuleCount(group) }} <LocaleText t="flattened rules" /></span>
+					</div>
 				</div>
 				<pre class="ruleset-preview mb-0">{{ previewRuleset }}</pre>
 			</div>
@@ -560,7 +590,15 @@ export default {
 .rule-row .form-control, .rule-row .form-select, .rule-actions .btn { min-height: 2.375rem; }
 .rule-actions-label { display: block; visibility: hidden; }
 .rule-actions .btn { display: inline-grid; width: 2.375rem; place-items: center; padding: 0; }
-.rule-port-help { min-height: 1.35rem; }
+.policy-port-group { display: grid; gap: 0.75rem; }
+.policy-port-empty { min-height: 2.375rem; display: flex; align-items: center; }
+.policy-port-list { display: grid; gap: 0.45rem; }
+.policy-port-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.45rem; align-items: start; }
+.policy-port-inputs { display: flex; gap: 0.45rem; min-width: 0; }
+.policy-port-inputs .form-control { min-width: 0; }
+.policy-port-inputs .btn, .policy-port-remove { display: inline-grid; width: 2.375rem; min-height: 2.375rem; place-items: center; padding: 0; }
+.policy-port-error { grid-column: 1 / -1; }
+.policy-port-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; }
 .empty-rules { margin-top: 0.75rem; padding: 0.7rem 0.8rem; border-left: 3px solid var(--bs-warning); background: var(--bs-warning-bg-subtle); color: var(--bs-warning-text-emphasis); font-size: 0.85rem; }
 .empty-rules-muted { border-left-color: var(--bs-secondary-color); background: var(--bs-secondary-bg); color: var(--bs-secondary-color); }
 .preview-panel { padding: 1rem; color: var(--bs-body-color); border: 1px solid var(--bs-border-color); border-radius: 7px; background: var(--bs-tertiary-bg); }
@@ -569,6 +607,9 @@ export default {
 .preview-heading code { overflow-wrap: anywhere; color: var(--bs-secondary-color); font-size: 0.7rem; text-align: right; }
 .preview-description { margin: 0.45rem 0 0.75rem; color: var(--bs-secondary-color); font-size: 0.8rem; }
 .policy-checks { display: grid; gap: 0.4rem; padding: 0.7rem; color: var(--bs-body-color); border: 1px solid var(--bs-border-color); border-radius: 6px; background: var(--bs-body-bg); }
+.policy-group-summary { display: grid; gap: 0.4rem; padding: 0.7rem; border: 1px solid var(--bs-border-color); border-radius: 6px; background: var(--bs-body-bg); font-size: 0.8rem; }
+.policy-group-summary-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; }
+.policy-group-summary-row code { overflow-wrap: anywhere; color: var(--bs-emphasis-color); }
 .ruleset-preview { max-height: 260px; overflow: auto; padding: 0.75rem; color: var(--bs-body-color); border: 1px solid var(--bs-border-color); border-radius: 4px; background: var(--bs-body-bg); font-size: 0.75rem; white-space: pre-wrap; }
 .policy-history { padding-top: 1rem; border-top: 1px solid var(--bs-border-color); }
 .policy-history h6 { color: var(--bs-emphasis-color); }
@@ -586,6 +627,6 @@ export default {
 .policy-history-status-success { color: var(--bs-success-text-emphasis); }
 .policy-history-status-warning { color: var(--bs-warning-text-emphasis); }
 .policy-history-status-danger { color: var(--bs-danger-text-emphasis); }
-@media (max-width: 768px) { .network-policy-overlay { padding: 0.5rem; } .policy-target { grid-template-columns: 1fr; gap: 0.85rem; } .policy-tabs { gap: 0.25rem; } .policy-tab { flex: 0 0 auto; } }
+@media (max-width: 768px) { .network-policy-overlay { padding: 0.5rem; } .policy-target { grid-template-columns: 1fr; gap: 0.85rem; } .policy-tabs { gap: 0.25rem; } .policy-tab { flex: 0 0 auto; } .policy-port-inputs { flex-wrap: wrap; } .policy-port-inputs .form-control { flex: 1 1 9rem; } }
 @media (max-width: 460px) { .network-policy-overlay { padding: 0; } .network-policy-workbench { min-height: 100%; border-radius: 0; } }
 </style>

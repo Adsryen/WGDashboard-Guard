@@ -3,6 +3,7 @@
 .DS_Store
 .idea
 src/db
+/db/
 __pycache__
 src/test.py
 *.db
@@ -57,4 +58,5 @@ coverage
 
 # Local Trellis workflow state and generated frontend release files.
 .trellis/
+.trellis-bak/
 src/static/dist/WGDashboardAdmin/

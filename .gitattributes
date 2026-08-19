@@ -1,0 +1,23 @@
+# Store text as LF in Git and check it out as LF across platforms.
+* text=auto eol=lf
+
+# Do not apply text conversion to binary assets.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary
+
+# POSIX scripts must remain LF even when edited on Windows.
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Windows batch files require CRLF for cmd.exe compatibility.
+*.bat text eol=crlf
+*.cmd text eol=crlf

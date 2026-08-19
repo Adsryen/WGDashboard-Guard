@@ -41,6 +41,8 @@ from modules.DashboardWebHooks import DashboardWebHooks
 from modules.NewConfigurationTemplates import NewConfigurationTemplates
 from network_policy.service import NetworkPolicyService, NetworkPolicyServiceError
 from network_policy.validation import PolicyValidationError
+from network_audit.service import NetworkAuditService, NetworkAuditServiceError
+from network_audit.validation import AuditQuery, AuditValidationError
 
 class CustomJsonEncoder(DefaultJSONProvider):
     def __init__(self, app):
@@ -212,6 +214,11 @@ with app.app_context():
     InitWireguardConfigurationsList(startup=True)
     DashboardClients: DashboardClients = DashboardClients(WireguardConfigurations)
     NetworkPolicyManager = NetworkPolicyService(DashboardConfig.engine)
+    try:
+        NetworkAuditManager = NetworkAuditService()
+    except NetworkAuditServiceError:
+        NetworkAuditManager = None
+        app.logger.exception("Network audit database is unavailable; audit query APIs will return 503")
     app.register_blueprint(createClientBlueprint(WireguardConfigurations, DashboardConfig, DashboardClients))
 
 _, APP_PREFIX = DashboardConfig.GetConfig("Server", "app_prefix")
@@ -241,7 +248,7 @@ def auth_req():
         apiKeyEnabled = DashboardConfig.GetConfig("Server", "dashboard_api_key")[1]
         if apiKey is not None and len(apiKey) > 0 and apiKeyEnabled:
             apiKeyExist = len(list(filter(lambda x : x.Key == apiKey, DashboardConfig.DashboardAPIKeys))) == 1
-            DashboardLogger.log(str(request.url), str(request.remote_addr), Message=f"API Key Access: {('true' if apiKeyExist else 'false')} - Key: {apiKey}")
+            DashboardLogger.log(str(request.url), str(request.remote_addr), Message=f"API Key Access: {('true' if apiKeyExist else 'false')}")
             if not apiKeyExist:
                 DashboardConfig.APIAccessed = False
                 response = Flask.make_response(app, {
@@ -313,6 +320,7 @@ def API_AuthenticateLogin():
         authToken = hashlib.sha256(f"{request.headers.get('wg-dashboard-apikey')}{datetime.now()}".encode()).hexdigest()
         session['role'] = 'admin'
         session['username'] = authToken
+        session['auth_source'] = 'api_key'
         resp = ResponseObject(True, DashboardConfig.GetConfig("Other", "welcome_session")[1])
         resp.set_cookie("authToken", authToken)
         session.permanent = True
@@ -331,6 +339,7 @@ def API_AuthenticateLogin():
         authToken = hashlib.sha256(f"{data['username']}{datetime.now()}".encode()).hexdigest()
         session['role'] = 'admin'
         session['username'] = authToken
+        session['auth_source'] = 'dashboard_login'
         resp = ResponseObject(True, DashboardConfig.GetConfig("Other", "welcome_session")[1])
         resp.set_cookie("authToken", authToken)
         session.permanent = True
@@ -931,6 +940,67 @@ def _network_policy_payload_from_request() -> tuple[dict, object]:
 
 def _network_policy_actor() -> str:
     return NetworkPolicyManager.actor_from_session(session.get("username"))
+
+
+def _network_audit_admin_response() -> ResponseObject | None:
+    """Audit metadata is unavailable to API-key and client sessions."""
+    if (
+        request.headers.get("wg-dashboard-apikey") is not None
+        or session.get("role") != "admin"
+        or session.get("auth_source") != "dashboard_login"
+    ):
+        return ResponseObject(False, "Unauthorized access.", status_code=401)
+    return None
+
+
+def _network_audit_query_from_request() -> AuditQuery:
+    if request.method == "GET":
+        payload = request.args.to_dict(flat=True)
+        for field in ("destination_port", "page", "page_size"):
+            if field in payload:
+                try:
+                    payload[field] = int(payload[field])
+                except ValueError as error:
+                    raise AuditValidationError(f"{field} must be an integer") from error
+    else:
+        payload = request.get_json(silent=True)
+    return AuditQuery.from_payload(payload)
+
+
+def _network_audit_service() -> NetworkAuditService:
+    if NetworkAuditManager is None:
+        raise NetworkAuditServiceError("audit database is unavailable")
+    return NetworkAuditManager
+
+
+@app.post(f'{APP_PREFIX}/api/networkAudit/query')
+def API_NetworkAuditQuery() -> ResponseObject:
+    unauthorized_response = _network_audit_admin_response()
+    if unauthorized_response is not None:
+        return unauthorized_response
+    try:
+        result = _network_audit_service().query(_network_audit_query_from_request())
+        DashboardLogger.log(str(request.url), str(request.remote_addr), Message="Network audit query requested")
+        return ResponseObject(data=result)
+    except AuditValidationError as error:
+        return ResponseObject(False, str(error), status_code=400)
+    except NetworkAuditServiceError as error:
+        return ResponseObject(False, str(error), status_code=503)
+
+
+@app.get(f'{APP_PREFIX}/api/networkAudit/summary')
+def API_NetworkAuditSummary() -> ResponseObject:
+    unauthorized_response = _network_audit_admin_response()
+    if unauthorized_response is not None:
+        return unauthorized_response
+    try:
+        result = _network_audit_service().summary(_network_audit_query_from_request())
+        DashboardLogger.log(str(request.url), str(request.remote_addr), Message="Network audit summary requested")
+        return ResponseObject(data=result)
+    except AuditValidationError as error:
+        return ResponseObject(False, str(error), status_code=400)
+    except NetworkAuditServiceError as error:
+        return ResponseObject(False, str(error), status_code=503)
 
 
 def _network_policy_overview_peers() -> list[dict]:

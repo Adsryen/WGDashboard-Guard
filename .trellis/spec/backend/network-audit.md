@@ -98,3 +98,16 @@ if request.headers.get("wg-dashboard-apikey") is not None or session.get("auth_s
 ```
 
 API-key authentication can otherwise create an administrative-looking session. Audit reads require local Dashboard-login provenance and must reject API-key-bearing requests without relying on shared process state.
+
+### 9. Administrator Alert Runner Contract
+
+- Alert persistence stays in the independent audit SQLite database. Schema upgrades add `AuditAlertStates`, `AuditAlertDeliveries`, and `AuditAlertRuns`; they must not migrate or write `wgdashboard.db`.
+- `AlertConfiguration.from_sections(email_section, audit_section)` is the single typed decoder for persisted alert values. The Dashboard API and `python -m network_audit.alerts` must both use it so booleans, integer thresholds, email validation, and test-verification state cannot drift.
+- The only recipient is `Email.audit_alert_recipient`: one valid mailbox, separate from `Email.send_from`, never a delimited list. Alert configuration consists of `alerts_enabled`, `denied_threshold`, `scan_threshold`, and `cooldown_minutes`; defaults are `false`, `10`, `20`, and `30` respectively.
+- Enablement requires a successful test delivery for the current recipient while SMTP is ready. Store only `NetworkAudit.alert_tested_at`, `alert_tested_recipient`, and `alert_tested_smtp_ready`; changing either the recipient or SMTP transport settings clears that verification. General Dashboard configuration endpoints must reject these alert keys so they cannot bypass the test-before-enable check.
+- Browser endpoints are genuine Dashboard-admin-session only: `GET /api/networkAudit/health`, `GET/POST /api/networkAudit/alerts/config`, `POST /api/networkAudit/alerts/test`, and `GET /api/networkAudit/alerts/status`. Reject API key, client, anonymous, and missing-provenance requests with `401`; never return SMTP secrets.
+- Every runner pass evaluates the preceding UTC five minutes. It alerts per peer for summed `policy_denied` connections and distinct `(DestinationAddress, PortKey)` scan dimensions, plus global collector-health or audit-storage-write events. Identities are `denied:<peer-key>`, `scan:<peer-key>`, `collector_health`, and `storage_write`.
+- Claiming and cooldown enforcement occur atomically in SQLite before SMTP delivery. Both successful and failed delivery updates remain cooldown-eligible for the configured period, preventing duplicate sends and SMTP-failure loops. Persist only a bounded, redacted error summary.
+- Collector health uses the read-only health snapshot. Missing, invalid, stale, degraded/failed, failed config synchronization, and write-failure conditions must be represented as structured API/runner status; a runner failure must not affect the collector, WireGuard, policy verdicts, or forwarding.
+- The systemd runner is local only: it reads the Dashboard INI and health snapshot, writes the audit database/attachments paths, opens no listener, and never imports the Flask app or invokes nftables.
+- Required coverage includes decoder rejection and current-test gating, threshold aggregation, atomic cooldown after SMTP failure, health failure modes, admin-session authorization, test/config/status API responses, and Chinese locale coverage for every new audit-page string.

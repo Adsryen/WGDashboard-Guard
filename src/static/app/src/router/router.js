@@ -80,6 +80,14 @@ const router = createRouter({
 					}
 				},
 				{
+					name: "Network Access Audit",
+					path: 'network-audit',
+					component: () => import('@/views/networkAudit.vue'),
+					meta: {
+						title: "Network access audit"
+					}
+				},
+				{
 					path: 'ping',
 					name: "Ping",
 					component: () => import('@/views/ping.vue'),

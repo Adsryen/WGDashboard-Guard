@@ -13,7 +13,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from .validation import AuditObservation, AuditQuery, address_sort_key
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 WINDOW_DURATION = timedelta(minutes=5)
 
 
@@ -90,6 +90,43 @@ class NetworkAuditRepository:
             db.Column("ActivityWindowsDeleted", db.Integer, nullable=False),
             db.Column("DailyAggregatesDeleted", db.Integer, nullable=False),
             db.Column("ErrorSummary", db.String(1024), nullable=True),
+        )
+        self.alert_states = db.Table(
+            "AuditAlertStates", self.metadata,
+            db.Column("AlertIdentity", db.String(96), primary_key=True),
+            db.Column("AlertType", db.String(32), nullable=False),
+            db.Column("PeerPublicKey", db.String(44), nullable=True),
+            db.Column("PeerNameSnapshot", db.String(255), nullable=True),
+            db.Column("TunnelAddress", db.String(45), nullable=True),
+            db.Column("LastClaimedAt", db.DateTime, nullable=False),
+            db.Column("LastDeliveredAt", db.DateTime, nullable=True),
+            db.Column("LastDeliverySucceeded", db.Boolean, nullable=True),
+            db.Column("LastErrorSummary", db.String(512), nullable=True),
+        )
+        self.alert_deliveries = db.Table(
+            "AuditAlertDeliveries", self.metadata,
+            db.Column("AlertDeliveryID", db.String(36), primary_key=True),
+            db.Column("AlertIdentity", db.String(96), nullable=False),
+            db.Column("AlertType", db.String(32), nullable=False),
+            db.Column("PeerPublicKey", db.String(44), nullable=True),
+            db.Column("PeerNameSnapshot", db.String(255), nullable=True),
+            db.Column("TunnelAddress", db.String(45), nullable=True),
+            db.Column("ClaimedAt", db.DateTime, nullable=False),
+            db.Column("DeliveredAt", db.DateTime, nullable=True),
+            db.Column("Succeeded", db.Boolean, nullable=True),
+            db.Column("ErrorSummary", db.String(512), nullable=True),
+            db.Index("ix_AuditAlertDeliveries_claimed", "ClaimedAt"),
+            db.Index("ix_AuditAlertDeliveries_identity", "AlertIdentity", "ClaimedAt"),
+        )
+        self.alert_runs = db.Table(
+            "AuditAlertRuns", self.metadata,
+            db.Column("AlertRunID", db.String(36), primary_key=True),
+            db.Column("RanAt", db.DateTime, nullable=False),
+            db.Column("AlertsEnabled", db.Boolean, nullable=False),
+            db.Column("EventsDetected", db.Integer, nullable=False),
+            db.Column("ClaimsCreated", db.Integer, nullable=False),
+            db.Column("ErrorSummary", db.String(512), nullable=True),
+            db.Index("ix_AuditAlertRuns_ran", "RanAt"),
         )
         self.initialize()
 
@@ -264,6 +301,147 @@ class NetworkAuditRepository:
                 ErrorSummary=None,
             ))
         return result
+
+    def alert_candidates(self, window_start: datetime, now: datetime) -> list[dict[str, Any]]:
+        """Return bounded, per-peer alert aggregates for the current interval."""
+        time_condition = db.and_(
+            self.activity_windows.c.LastSeenAt >= window_start,
+            self.activity_windows.c.FirstSeenAt <= now,
+        )
+        denied_statement = db.select(
+            self.activity_windows.c.PeerPublicKey.label("PeerPublicKey"),
+            db.func.max(self.activity_windows.c.PeerNameSnapshot).label("PeerNameSnapshot"),
+            db.func.max(self.activity_windows.c.TunnelAddress).label("TunnelAddress"),
+            db.func.sum(self.activity_windows.c.ConnectionCount).label("ObservedValue"),
+        ).where(
+            time_condition,
+            self.activity_windows.c.Decision == "policy_denied",
+        ).group_by(self.activity_windows.c.PeerPublicKey)
+        scan_statement = db.select(
+            self.activity_windows.c.PeerPublicKey.label("PeerPublicKey"),
+            db.func.max(self.activity_windows.c.PeerNameSnapshot).label("PeerNameSnapshot"),
+            db.func.max(self.activity_windows.c.TunnelAddress).label("TunnelAddress"),
+            db.func.count(
+                db.distinct(
+                    self.activity_windows.c.DestinationAddress + db.literal("|") + self.activity_windows.c.PortKey
+                )
+            ).label("ObservedValue"),
+        ).where(time_condition).group_by(self.activity_windows.c.PeerPublicKey)
+        with self.engine.connect() as connection:
+            denied = [dict(row, alert_type="denied") for row in connection.execute(denied_statement).mappings()]
+            scan = [dict(row, alert_type="scan") for row in connection.execute(scan_statement).mappings()]
+        return denied + scan
+
+    def claim_alert(
+        self,
+        *,
+        identity: str,
+        alert_type: str,
+        now: datetime,
+        cooldown: timedelta,
+        peer_public_key: str | None = None,
+        peer_name_snapshot: str | None = None,
+        tunnel_address: str | None = None,
+    ) -> str | None:
+        """Atomically claim an alert and create its delivery record if cooldown elapsed."""
+        cutoff = now - cooldown
+        values = {
+            "AlertIdentity": identity,
+            "AlertType": alert_type,
+            "PeerPublicKey": peer_public_key,
+            "PeerNameSnapshot": peer_name_snapshot,
+            "TunnelAddress": tunnel_address,
+            "LastClaimedAt": now,
+            "LastDeliveredAt": None,
+            "LastDeliverySucceeded": None,
+            "LastErrorSummary": None,
+        }
+        with self.engine.begin() as connection:
+            insert = sqlite_insert(self.alert_states).values(**values).on_conflict_do_nothing(
+                index_elements=[self.alert_states.c.AlertIdentity]
+            )
+            claimed = (connection.execute(insert).rowcount or 0) == 1
+            if not claimed:
+                update = self.alert_states.update().where(
+                    self.alert_states.c.AlertIdentity == identity,
+                    self.alert_states.c.LastClaimedAt <= cutoff,
+                ).values(**values)
+                claimed = (connection.execute(update).rowcount or 0) == 1
+            if not claimed:
+                return None
+            delivery_id = str(uuid.uuid4())
+            connection.execute(self.alert_deliveries.insert().values(
+                AlertDeliveryID=delivery_id,
+                AlertIdentity=identity,
+                AlertType=alert_type,
+                PeerPublicKey=peer_public_key,
+                PeerNameSnapshot=peer_name_snapshot,
+                TunnelAddress=tunnel_address,
+                ClaimedAt=now,
+                DeliveredAt=None,
+                Succeeded=None,
+                ErrorSummary=None,
+            ))
+        return delivery_id
+
+    def complete_alert_delivery(
+        self,
+        delivery_id: str,
+        *,
+        delivered_at: datetime,
+        succeeded: bool,
+        error_summary: str | None,
+    ) -> None:
+        with self.engine.begin() as connection:
+            delivery = connection.execute(
+                db.select(self.alert_deliveries).where(self.alert_deliveries.c.AlertDeliveryID == delivery_id)
+            ).mappings().one_or_none()
+            if delivery is None:
+                raise ValueError("unknown audit alert delivery")
+            connection.execute(self.alert_deliveries.update().where(
+                self.alert_deliveries.c.AlertDeliveryID == delivery_id
+            ).values(
+                DeliveredAt=delivered_at,
+                Succeeded=succeeded,
+                ErrorSummary=error_summary,
+            ))
+            connection.execute(self.alert_states.update().where(
+                self.alert_states.c.AlertIdentity == delivery["AlertIdentity"]
+            ).values(
+                LastDeliveredAt=delivered_at,
+                LastDeliverySucceeded=succeeded,
+                LastErrorSummary=error_summary,
+            ))
+
+    def record_alert_run(
+        self,
+        *,
+        ran_at: datetime,
+        alerts_enabled: bool,
+        events_detected: int,
+        claims_created: int,
+        error_summary: str | None,
+    ) -> None:
+        with self.engine.begin() as connection:
+            connection.execute(self.alert_runs.insert().values(
+                AlertRunID=str(uuid.uuid4()),
+                RanAt=ran_at,
+                AlertsEnabled=alerts_enabled,
+                EventsDetected=events_detected,
+                ClaimsCreated=claims_created,
+                ErrorSummary=error_summary,
+            ))
+
+    def alert_status(self) -> dict[str, Any]:
+        latest_run = db.select(self.alert_runs).order_by(self.alert_runs.c.RanAt.desc()).limit(1)
+        latest_delivery = db.select(self.alert_deliveries).order_by(
+            self.alert_deliveries.c.ClaimedAt.desc(), self.alert_deliveries.c.AlertDeliveryID.desc()
+        ).limit(1)
+        with self.engine.connect() as connection:
+            return {
+                "latest_run": connection.execute(latest_run).mappings().one_or_none(),
+                "latest_delivery": connection.execute(latest_delivery).mappings().one_or_none(),
+            }
 
     @staticmethod
     def _serialize_window(row: db.RowMapping) -> dict[str, Any]:

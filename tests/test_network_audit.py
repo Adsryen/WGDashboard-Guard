@@ -71,7 +71,10 @@ class NetworkAuditServiceTest(unittest.TestCase):
         tables = set(db.inspect(self.service.engine).get_table_names())
 
         self.assertEqual(
-            {"AuditSchemaVersions", "AuditActivityWindows", "AuditDailyAggregates", "AuditRetentionRuns"},
+            {
+                "AuditSchemaVersions", "AuditActivityWindows", "AuditDailyAggregates", "AuditRetentionRuns",
+                "AuditAlertStates", "AuditAlertDeliveries", "AuditAlertRuns",
+            },
             tables,
         )
         self.assertTrue(self.database_path.exists())

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import os
 from pathlib import Path
 from typing import Any
@@ -99,6 +99,133 @@ class NetworkAuditService:
         except SQLAlchemyError as error:
             raise NetworkAuditServiceError("audit database is unavailable") from error
 
+    def alert_candidates(self, now: datetime | None = None, window: timedelta = timedelta(minutes=5)) -> list[dict[str, Any]]:
+        if not isinstance(window, timedelta) or window <= timedelta(0):
+            raise ValueError("window must be a positive timedelta")
+        normalized_now = normalize_utc(now or datetime.now(timezone.utc), "now")
+        try:
+            return self.repository.alert_candidates(normalized_now - window, normalized_now)
+        except SQLAlchemyError as error:
+            raise NetworkAuditServiceError("audit database is unavailable") from error
+
+    def claim_alert(
+        self,
+        *,
+        identity: str,
+        alert_type: str,
+        cooldown: timedelta,
+        now: datetime | None = None,
+        peer_public_key: str | None = None,
+        peer_name_snapshot: str | None = None,
+        tunnel_address: str | None = None,
+    ) -> str | None:
+        if not isinstance(identity, str) or not identity or len(identity) > 96:
+            raise ValueError("identity must be a non-empty string up to 96 characters")
+        if not isinstance(alert_type, str) or not alert_type or len(alert_type) > 32:
+            raise ValueError("alert_type must be a non-empty string up to 32 characters")
+        if not isinstance(cooldown, timedelta) or cooldown < timedelta(0):
+            raise ValueError("cooldown must be a zero or greater timedelta")
+        normalized_now = normalize_utc(now or datetime.now(timezone.utc), "now")
+        try:
+            return self.repository.claim_alert(
+                identity=identity,
+                alert_type=alert_type,
+                now=normalized_now,
+                cooldown=cooldown,
+                peer_public_key=peer_public_key,
+                peer_name_snapshot=peer_name_snapshot,
+                tunnel_address=tunnel_address,
+            )
+        except SQLAlchemyError as error:
+            raise NetworkAuditServiceError("audit database is unavailable") from error
+
+    def complete_alert_delivery(
+        self,
+        delivery_id: str,
+        *,
+        succeeded: bool,
+        error_summary: str | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        if not isinstance(delivery_id, str) or not delivery_id:
+            raise ValueError("delivery_id must be a non-empty string")
+        if not isinstance(succeeded, bool):
+            raise ValueError("succeeded must be a boolean")
+        if error_summary is not None and (not isinstance(error_summary, str) or len(error_summary) > 512):
+            raise ValueError("error_summary must be null or a string up to 512 characters")
+        normalized_now = normalize_utc(now or datetime.now(timezone.utc), "now")
+        try:
+            self.repository.complete_alert_delivery(
+                delivery_id,
+                delivered_at=normalized_now,
+                succeeded=succeeded,
+                error_summary=error_summary,
+            )
+        except SQLAlchemyError as error:
+            raise NetworkAuditServiceError("audit database is unavailable") from error
+
+    def record_alert_run(
+        self,
+        *,
+        alerts_enabled: bool,
+        events_detected: int,
+        claims_created: int,
+        error_summary: str | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        if not isinstance(alerts_enabled, bool):
+            raise ValueError("alerts_enabled must be a boolean")
+        if any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in (events_detected, claims_created)):
+            raise ValueError("alert run counts must be zero or greater integers")
+        if error_summary is not None and (not isinstance(error_summary, str) or len(error_summary) > 512):
+            raise ValueError("error_summary must be null or a string up to 512 characters")
+        normalized_now = normalize_utc(now or datetime.now(timezone.utc), "now")
+        try:
+            self.repository.record_alert_run(
+                ran_at=normalized_now,
+                alerts_enabled=alerts_enabled,
+                events_detected=events_detected,
+                claims_created=claims_created,
+                error_summary=error_summary,
+            )
+        except SQLAlchemyError as error:
+            raise NetworkAuditServiceError("audit database is unavailable") from error
+
+    def alert_status(self) -> dict[str, Any]:
+        try:
+            status = self.repository.alert_status()
+        except SQLAlchemyError as error:
+            raise NetworkAuditServiceError("audit database is unavailable") from error
+        latest_run = _serialize_alert_row(status["latest_run"])
+        latest_delivery = _serialize_alert_row(status["latest_delivery"])
+        return {
+            "last_evaluated_at": latest_run["ran_at"] if latest_run else None,
+            "last_delivery_at": latest_delivery["delivered_at"] if latest_delivery else None,
+            "last_delivery_succeeded": latest_delivery["succeeded"] if latest_delivery else None,
+            "last_error_summary": (
+                latest_delivery["error_summary"] if latest_delivery and latest_delivery["error_summary"]
+                else latest_run["error_summary"] if latest_run else None
+            ),
+            "latest_run": latest_run,
+            "latest_delivery": latest_delivery,
+        }
+
 
 def _isoformat(value: datetime | None) -> str | None:
     return value.replace(tzinfo=None).isoformat(timespec="seconds") + "Z" if value else None
+
+
+def _serialize_alert_row(row: Any) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return {
+        _snake_case(key): _isoformat(value) if isinstance(value, datetime) else value
+        for key, value in dict(row).items()
+    }
+
+
+def _snake_case(value: str) -> str:
+    return "".join(
+        ("_" if index and character.isupper() and not value[index - 1].isupper() else "") + character.lower()
+        for index, character in enumerate(value)
+    )

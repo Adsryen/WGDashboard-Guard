@@ -1,0 +1,30 @@
+[Unit]
+Description=WGDashboard Network Audit Alert Runner
+Documentation=https://github.com/WGDashboard/WGDashboard
+After=network-online.target wgd-network-audit-collector.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/WGDashboard/src
+Environment=PYTHONPATH=/opt/WGDashboard/src
+Environment=CONFIGURATION_PATH=/opt/WGDashboard/src
+UMask=0027
+ExecStart=/usr/bin/python3 -m network_audit.alerts --database /opt/WGDashboard/src/db/wgdashboard_audit.db --health /run/wgd-network-audit/health.json --config /opt/WGDashboard/src/wg-dashboard.ini --interval-seconds 60
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=15
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadOnlyPaths=/opt/WGDashboard/src/wg-dashboard.ini /run/wgd-network-audit/health.json
+ReadWritePaths=/opt/WGDashboard/src/db /opt/WGDashboard/src/attachments
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

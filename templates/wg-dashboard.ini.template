@@ -46,7 +46,17 @@ username =
 email_password =
 authentication_required = true
 send_from =
+audit_alert_recipient =
 email_template =
+
+[NetworkAudit]
+alerts_enabled = false
+denied_threshold = 10
+scan_threshold = 20
+cooldown_minutes = 30
+alert_tested_at =
+alert_tested_recipient =
+alert_tested_smtp_ready = false
 
 [OIDC]
 admin_enable = false

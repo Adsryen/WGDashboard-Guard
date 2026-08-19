@@ -4,7 +4,7 @@ import time, re, uuid, bcrypt, psutil, pyotp, threading
 import traceback
 from uuid import uuid4
 from zipfile import ZipFile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import sqlalchemy
 from jinja2 import Template
@@ -42,8 +42,10 @@ from modules.NewConfigurationTemplates import NewConfigurationTemplates
 from network_policy.service import NetworkPolicyService, NetworkPolicyServiceError
 from network_policy.validation import PolicyValidationError
 from network_audit.service import NetworkAuditService, NetworkAuditServiceError
+from network_audit.alerts import AlertConfiguration, AlertConfigurationError
 from network_audit.sync import AuditConfigSynchronizer, NetworkAuditSyncError
 from network_audit.validation import AuditQuery, AuditValidationError
+from network_audit.health import read_health_snapshot
 
 class CustomJsonEncoder(DefaultJSONProvider):
     def __init__(self, app):
@@ -675,10 +677,19 @@ def API_updateDashboardConfigurationItem():
     data = request.get_json()
     if "section" not in data.keys() or "key" not in data.keys() or "value" not in data.keys():
         return ResponseObject(False, "Invalid request.")
+    if (
+        data["section"] == "NetworkAudit"
+        or (data["section"] == "Email" and data["key"] == "audit_alert_recipient")
+    ):
+        return ResponseObject(False, "Update audit alert settings through the network audit settings API.", status_code=400)
     valid, msg = DashboardConfig.SetConfig(
         data["section"], data["key"], data['value'])
     if not valid:
         return ResponseObject(False, msg)
+    if data["section"] == "Email" and data["key"] in {
+        "server", "port", "encryption", "username", "email_password", "authentication_required", "send_from",
+    }:
+        _network_audit_clear_alert_test_verification()
     if data['section'] == "Server":
         if data['key'] == 'wg_conf_path':
             WireguardConfigurations.clear()
@@ -982,6 +993,185 @@ def _network_audit_service() -> NetworkAuditService:
     return NetworkAuditManager
 
 
+_NETWORK_AUDIT_ALERT_CONFIG_FIELDS = {
+    "alerts_enabled", "audit_alert_recipient", "denied_threshold", "scan_threshold", "cooldown_minutes",
+}
+_NETWORK_AUDIT_HEALTH_PATH = os.getenv("WGD_NETWORK_AUDIT_HEALTH_PATH", "/run/wgd-network-audit/health.json")
+_NETWORK_AUDIT_HEALTH_MAX_AGE_SECONDS = 30
+
+
+def _network_audit_config_value(section: str, key: str):
+    return DashboardConfig.GetConfig(section, key)[1]
+
+
+def _network_audit_alert_configuration() -> AlertConfiguration:
+    """Decode Dashboard alert settings exactly as the standalone runner does."""
+    try:
+        return AlertConfiguration.from_sections({
+            "Email": {
+                "audit_alert_recipient": _network_audit_config_value("Email", "audit_alert_recipient"),
+            },
+            "NetworkAudit": {
+                key: _network_audit_config_value("NetworkAudit", key)
+                for key in (
+                    "alerts_enabled",
+                    "denied_threshold",
+                    "scan_threshold",
+                    "cooldown_minutes",
+                    "alert_tested_at",
+                    "alert_tested_recipient",
+                    "alert_tested_smtp_ready",
+                )
+            },
+        })
+    except AlertConfigurationError as error:
+        raise NetworkAuditServiceError(
+            "Audit alert configuration is invalid. Update the alert settings and try again."
+        ) from error
+
+
+def _network_audit_clear_alert_test_verification() -> None:
+    for key, value in (
+        ("alert_tested_at", ""),
+        ("alert_tested_recipient", ""),
+        ("alert_tested_smtp_ready", False),
+    ):
+        DashboardConfig.SetConfig("NetworkAudit", key, value)
+
+
+def _network_audit_alert_test_status(configuration: AlertConfiguration | None = None) -> dict:
+    configuration = configuration or _network_audit_alert_configuration()
+    recipient = configuration.recipient
+    tested_at = (
+        configuration.alert_tested_at.isoformat().replace("+00:00", "Z")
+        if configuration.alert_tested_at
+        else None
+    )
+    smtp_ready = EmailSender.is_ready()
+    tested = bool(
+        recipient
+        and smtp_ready
+        and configuration.alert_tested_recipient == recipient
+        and configuration.alert_tested_smtp_ready
+        and tested_at
+    )
+    if tested:
+        reason = None
+    elif not recipient:
+        reason = "Configure one audit alert recipient before enabling alerts."
+    elif not smtp_ready:
+        reason = "Configure the SMTP sender before enabling alerts."
+    else:
+        reason = "Send a successful audit alert test email before enabling alerts."
+    return {
+        "tested_at": tested_at,
+        "recipient_matches": bool(recipient and configuration.alert_tested_recipient == recipient),
+        "smtp_ready": smtp_ready,
+        "ready_to_enable": tested,
+        "reason": reason,
+    }
+
+
+def _network_audit_alert_config() -> dict:
+    configuration = _network_audit_alert_configuration()
+    config = {
+        "alerts_enabled": configuration.alerts_enabled,
+        "audit_alert_recipient": configuration.recipient or "",
+        "denied_threshold": configuration.denied_threshold,
+        "scan_threshold": configuration.scan_threshold,
+        "cooldown_minutes": configuration.cooldown_minutes,
+    }
+    config["test"] = _network_audit_alert_test_status(configuration)
+    return config
+
+
+def _network_audit_alert_update(payload: object) -> dict:
+    if not isinstance(payload, dict):
+        raise AuditValidationError("request body must be an object")
+    unknown_fields = set(payload) - _NETWORK_AUDIT_ALERT_CONFIG_FIELDS
+    if unknown_fields:
+        raise AuditValidationError(f"unsupported alert configuration fields: {', '.join(sorted(unknown_fields))}")
+    if set(payload) != _NETWORK_AUDIT_ALERT_CONFIG_FIELDS:
+        raise AuditValidationError("all alert configuration fields are required")
+
+    enabled = payload["alerts_enabled"]
+    recipient = payload["audit_alert_recipient"]
+    denied_threshold = payload["denied_threshold"]
+    scan_threshold = payload["scan_threshold"]
+    cooldown_minutes = payload["cooldown_minutes"]
+    for section, key, value in (
+        ("NetworkAudit", "alerts_enabled", enabled),
+        ("Email", "audit_alert_recipient", recipient),
+        ("NetworkAudit", "denied_threshold", denied_threshold),
+        ("NetworkAudit", "scan_threshold", scan_threshold),
+        ("NetworkAudit", "cooldown_minutes", cooldown_minutes),
+    ):
+        valid, message = DashboardConfig.ValidateConfig(section, key, value)
+        if not valid:
+            raise AuditValidationError(message)
+
+    previous_recipient = _network_audit_config_value("Email", "audit_alert_recipient")
+    if enabled and recipient != previous_recipient:
+        raise AuditValidationError("Send a successful audit alert test email for the new recipient before enabling alerts.")
+    test_status = _network_audit_alert_test_status()
+    if enabled and not test_status["ready_to_enable"]:
+        raise AuditValidationError(test_status["reason"])
+
+    updates = (
+        ("Email", "audit_alert_recipient", recipient),
+        ("NetworkAudit", "denied_threshold", denied_threshold),
+        ("NetworkAudit", "scan_threshold", scan_threshold),
+        ("NetworkAudit", "cooldown_minutes", cooldown_minutes),
+        ("NetworkAudit", "alerts_enabled", enabled),
+    )
+    for section, key, value in updates:
+        valid, message = DashboardConfig.SetConfig(section, key, value)
+        if not valid:
+            raise NetworkAuditServiceError(message or "could not save audit alert configuration")
+    if recipient != previous_recipient:
+        _network_audit_clear_alert_test_verification()
+    return _network_audit_alert_config()
+
+
+def _network_audit_health() -> dict:
+    try:
+        snapshot = read_health_snapshot(_NETWORK_AUDIT_HEALTH_PATH)
+        modified_at = datetime.fromtimestamp(os.path.getmtime(_NETWORK_AUDIT_HEALTH_PATH), timezone.utc)
+    except FileNotFoundError:
+        return {"state": "missing", "message": "Collector health snapshot is missing.", "snapshot": None}
+    except (OSError, AuditValidationError, ValueError):
+        return {"state": "invalid", "message": "Collector health snapshot cannot be read.", "snapshot": None}
+
+    age_seconds = max(0, int((datetime.now(timezone.utc) - modified_at).total_seconds()))
+    state = "stale" if age_seconds > _NETWORK_AUDIT_HEALTH_MAX_AGE_SECONDS else snapshot.status.value
+    message = "Collector health snapshot is stale." if state == "stale" else None
+    return {
+        "state": state,
+        "message": message,
+        "updated_at": modified_at.isoformat().replace("+00:00", "Z"),
+        "age_seconds": age_seconds,
+        "snapshot": snapshot.to_payload(),
+    }
+
+
+def _network_audit_alert_status() -> dict:
+    service = _network_audit_service()
+    status_method = getattr(service, "alert_status", None)
+    configuration = _network_audit_alert_config()
+    if not callable(status_method):
+        return {
+            "runner": {
+                "state": "unavailable",
+                "message": "Audit alert runner status is unavailable until the alert service is installed.",
+            },
+            "configuration": configuration,
+        }
+    status = status_method()
+    if not isinstance(status, dict):
+        raise NetworkAuditServiceError("audit alert status is unavailable")
+    return {**status, "configuration": configuration}
+
+
 @app.post(f'{APP_PREFIX}/api/networkAudit/query')
 def API_NetworkAuditQuery() -> ResponseObject:
     unauthorized_response = _network_audit_admin_response()
@@ -1008,6 +1198,98 @@ def API_NetworkAuditSummary() -> ResponseObject:
         return ResponseObject(data=result)
     except AuditValidationError as error:
         return ResponseObject(False, str(error), status_code=400)
+    except NetworkAuditServiceError as error:
+        return ResponseObject(False, str(error), status_code=503)
+
+
+@app.get(f'{APP_PREFIX}/api/networkAudit/health')
+def API_NetworkAuditHealth() -> ResponseObject:
+    unauthorized_response = _network_audit_admin_response()
+    if unauthorized_response is not None:
+        return unauthorized_response
+    return ResponseObject(data=_network_audit_health())
+
+
+@app.get(f'{APP_PREFIX}/api/networkAudit/alerts/config')
+def API_NetworkAuditAlertsConfig() -> ResponseObject:
+    unauthorized_response = _network_audit_admin_response()
+    if unauthorized_response is not None:
+        return unauthorized_response
+    try:
+        return ResponseObject(data=_network_audit_alert_config())
+    except NetworkAuditServiceError as error:
+        return ResponseObject(False, str(error), status_code=503)
+
+
+@app.post(f'{APP_PREFIX}/api/networkAudit/alerts/config')
+def API_NetworkAuditAlertsUpdateConfig() -> ResponseObject:
+    unauthorized_response = _network_audit_admin_response()
+    if unauthorized_response is not None:
+        return unauthorized_response
+    try:
+        return ResponseObject(data=_network_audit_alert_update(request.get_json(silent=True)))
+    except AuditValidationError as error:
+        return ResponseObject(False, str(error), status_code=400)
+    except NetworkAuditServiceError as error:
+        return ResponseObject(False, str(error), status_code=503)
+
+
+@app.post(f'{APP_PREFIX}/api/networkAudit/alerts/test')
+def API_NetworkAuditAlertsTest() -> ResponseObject:
+    unauthorized_response = _network_audit_admin_response()
+    if unauthorized_response is not None:
+        return unauthorized_response
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or set(payload) != {"audit_alert_recipient"}:
+        return ResponseObject(False, "Provide one audit alert recipient for the test email.", status_code=400)
+    recipient = payload["audit_alert_recipient"]
+    valid, message = DashboardConfig.ValidateConfig("Email", "audit_alert_recipient", recipient)
+    if not valid or not recipient:
+        return ResponseObject(False, message or "Configure one audit alert recipient before sending a test email.", status_code=400)
+    if not recipient:
+        return ResponseObject(False, "Configure one audit alert recipient before sending a test email.", status_code=400)
+    if not EmailSender.is_ready():
+        return ResponseObject(False, "Configure the SMTP sender before sending a test email.", status_code=400)
+
+    previous_recipient = _network_audit_config_value("Email", "audit_alert_recipient")
+    if recipient != previous_recipient:
+        saved, message = DashboardConfig.SetConfig("Email", "audit_alert_recipient", recipient)
+        if not saved:
+            return ResponseObject(False, message or "Could not save the audit alert recipient.", status_code=503)
+        _network_audit_clear_alert_test_verification()
+
+    sent, error = EmailSender.send(
+        recipient,
+        "WGDashboard network audit alert test",
+        (
+            "This is a test of WGDashboard network audit alerts. "
+            "Audit policy verdicts describe gateway observations and do not confirm remote application success."
+        ),
+    )
+    if not sent:
+        app.logger.warning("Network audit alert test email failed")
+        return ResponseObject(False, "Audit alert test email could not be sent. Verify the SMTP configuration and try again.", status_code=503)
+
+    tested_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    for key, value in (
+        ("alert_tested_at", tested_at),
+        ("alert_tested_recipient", recipient),
+        ("alert_tested_smtp_ready", True),
+    ):
+        saved, message = DashboardConfig.SetConfig("NetworkAudit", key, value)
+        if not saved:
+            return ResponseObject(False, message or "Could not save audit alert test status.", status_code=503)
+    DashboardLogger.log(str(request.url), str(request.remote_addr), Message="Network audit alert test email sent")
+    return ResponseObject(data=_network_audit_alert_config()["test"])
+
+
+@app.get(f'{APP_PREFIX}/api/networkAudit/alerts/status')
+def API_NetworkAuditAlertsStatus() -> ResponseObject:
+    unauthorized_response = _network_audit_admin_response()
+    if unauthorized_response is not None:
+        return unauthorized_response
+    try:
+        return ResponseObject(data=_network_audit_alert_status())
     except NetworkAuditServiceError as error:
         return ResponseObject(False, str(error), status_code=503)
 

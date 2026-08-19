@@ -98,6 +98,13 @@ export default {
 						</RouterLink>
 					</li>
 					<li class="nav-item">
+						<RouterLink class="nav-link rounded-3" to="/network-audit"
+						            active-class="active">
+							<i class="bi bi-activity me-2"></i>
+							<LocaleText t="Network access audit"></LocaleText>
+						</RouterLink>
+					</li>
+					<li class="nav-item">
 						<RouterLink class="nav-link rounded-3" to="/webhooks"
 									active-class="active">
 							<i class="bi bi-postcard me-2"></i>

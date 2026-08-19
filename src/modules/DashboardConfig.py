@@ -1,7 +1,7 @@
 """
 Dashboard Configuration
 """
-import configparser, secrets, os, pyotp, ipaddress, bcrypt
+import configparser, secrets, os, pyotp, ipaddress, bcrypt, re
 from sqlalchemy_utils import database_exists, create_database
 import sqlalchemy as db
 from datetime import datetime
@@ -71,7 +71,17 @@ class DashboardConfig:
                 "email_password": "",
                 "authentication_required": "true",
                 "send_from": "",
+                "audit_alert_recipient": "",
                 "email_template": ""
+            },
+            "NetworkAudit": {
+                "alerts_enabled": "false",
+                "denied_threshold": "10",
+                "scan_threshold": "20",
+                "cooldown_minutes": "30",
+                "alert_tested_at": "",
+                "alert_tested_recipient": "",
+                "alert_tested_smtp_ready": "false"
             },
             "OIDC": {
                 "admin_enable": "false",
@@ -240,10 +250,37 @@ class DashboardConfig:
                     return False, "Current password does not match."
                 if value["newPassword"] != value["repeatNewPassword"]:
                     return False, "New passwords does not match"
+        if section == "Email" and key == "audit_alert_recipient":
+            if not isinstance(value, str):
+                return False, "Audit alert recipient must be a single email address."
+            if value and (
+                    len(value) > 254
+                    or re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value) is None):
+                return False, "Audit alert recipient must be a valid single email address."
+        if section == "NetworkAudit":
+            if key == "alerts_enabled" and type(value) is not bool:
+                return False, "Audit alerts enabled must be true or false."
+            if key in {"denied_threshold", "scan_threshold"}:
+                if type(value) is not int or not 1 <= value <= 100000:
+                    return False, "Audit alert thresholds must be integers between 1 and 100000."
+            if key == "cooldown_minutes":
+                if type(value) is not int or not 1 <= value <= 1440:
+                    return False, "Audit alert cooldown must be an integer between 1 and 1440 minutes."
+            if key == "alert_tested_recipient":
+                if not isinstance(value, str) or (value and re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value) is None):
+                    return False, "Audit alert test recipient must be a valid single email address."
+            if key == "alert_tested_at" and (not isinstance(value, str) or len(value) > 64):
+                return False, "Audit alert test time is invalid."
+            if key == "alert_tested_smtp_ready" and type(value) is not bool:
+                return False, "Audit alert SMTP test status must be true or false."
         return True, ""
 
     def generatePassword(self, plainTextPassword: str):
         return bcrypt.hashpw(plainTextPassword.encode("utf-8"), bcrypt.gensalt())
+
+    def ValidateConfig(self, section: str, key: str, value: Any) -> tuple[bool, str]:
+        """Validate a configuration item without writing it to disk."""
+        return self.__configValidation(section, key, value)
 
     def __checkPassword(self, plainTextPassword: str, hashedPassword: bytes):
         return bcrypt.checkpw(plainTextPassword.encode("utf-8"), hashedPassword)

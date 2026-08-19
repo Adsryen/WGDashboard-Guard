@@ -27,7 +27,7 @@ The test verifies that the managed Peer can use TCP and UDP to `target-a` and `t
 
 It also proves the managed Peer can still open the gateway-local SSH listener and receive a response from the gateway-local UDP `51820` listener. Those packets terminate in `INPUT`; they do not match the policy's `FORWARD` chain.
 
-Before applying the policy, the fixture creates a separate `inet docker_sentinel` nftables table. The test checks its exact contents after a successful apply and after a deliberately failed load that occurs after `nft --check`. This demonstrates that the Agent updates only `inet wgd_network_policy` and preserves both its last known-good table and unrelated tables.
+Before applying the policy, the fixture creates a separate `inet docker_sentinel` nftables table and applies the audit agent's independent `inet wgd_network_audit` observation table. The test checks the sentinel's exact contents after a successful policy apply and after a deliberately failed policy load, and verifies the audit table is unchanged. This demonstrates that policy apply updates only `inet wgd_network_policy` and preserves both the audit table and unrelated tables.
 
 For interactive inspection, start the topology without cleanup:
 

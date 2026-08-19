@@ -1,0 +1,30 @@
+[Unit]
+Description=WGDashboard Network Audit Collector
+Documentation=https://github.com/WGDashboard/WGDashboard
+After=network-online.target wgd-network-audit-agent.service
+Wants=network-online.target
+Requires=wgd-network-audit-agent.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/WGDashboard/src
+Environment=PYTHONPATH=/opt/WGDashboard/src
+UMask=0027
+ExecStart=/usr/bin/python3 -m network_audit.collector --config /run/wgd-network-audit/config.json --spool /var/lib/wgd-network-audit/spool.db --health /run/wgd-network-audit/health.json
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/run/wgd-network-audit /var/lib/wgd-network-audit /opt/WGDashboard/src/db
+RestrictAddressFamilies=AF_NETLINK AF_UNIX
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

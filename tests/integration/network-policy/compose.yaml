@@ -4,6 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
       additional_contexts:
+        network_audit_source: ../../../src/network_audit
         network_policy_source: ../../../src/network_policy
     image: wgd-network-policy-integration:local
     privileged: true

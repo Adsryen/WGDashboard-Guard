@@ -23,7 +23,16 @@ except ModuleNotFoundError:
 
 from network_policy.agent_protocol import AgentProtocolError, AgentRequest
 from network_policy.agent import NftablesExecutor
-from network_policy.compiler import DENIAL_RESPONSE_PORT, TABLE_NAME, compile_check_ruleset, compile_ruleset, policy_hash
+from network_policy.compiler import (
+    DENIAL_RESPONSE_PORT,
+    NFLOG_POLICY_ALLOWED_PREFIX,
+    NFLOG_POLICY_DECISION_GROUP,
+    NFLOG_POLICY_DENIED_PREFIX,
+    TABLE_NAME,
+    compile_check_ruleset,
+    compile_ruleset,
+    policy_hash,
+)
 from network_policy.denial_responder import DenialRequestHandler, ThreadingHTTPServer
 from network_policy.validation import PolicyValidationError, validate_policy
 
@@ -150,7 +159,11 @@ class NetworkPolicyCompilerTest(unittest.TestCase):
         ruleset, _ = compile_ruleset([policy])
 
         for port in ports:
-            self.assertIn(f"ip daddr 192.168.0.175/32 tcp dport {port} accept", ruleset)
+            self.assertIn(
+                f"ip daddr 192.168.0.175/32 tcp dport {port} "
+                f'log prefix "{NFLOG_POLICY_ALLOWED_PREFIX}" group {NFLOG_POLICY_DECISION_GROUP} accept',
+                ruleset,
+            )
 
     def test_compiles_allow_before_per_peer_default_drop(self):
         policy = validate_policy(policy_payload())
@@ -158,19 +171,53 @@ class NetworkPolicyCompilerTest(unittest.TestCase):
 
         self.assertIn(f"flush table inet {TABLE_NAME}", ruleset)
         self.assertIn(
-            'iifname "wg0" ip saddr 10.8.0.2 ip daddr 192.168.0.170/32 meta l4proto tcp accept',
+            'iifname "wg0" ip saddr 10.8.0.2 ip daddr 192.168.0.170/32 '
+            f'meta l4proto tcp log prefix "{NFLOG_POLICY_ALLOWED_PREFIX}" '
+            f'group {NFLOG_POLICY_DECISION_GROUP} accept',
             ruleset,
         )
-        self.assertIn('tcp dport 8118 accept', ruleset)
-        self.assertIn('ip daddr 192.168.0.170/32 meta l4proto icmp accept', ruleset)
-        self.assertIn('ip daddr 192.168.10.117/32 meta l4proto icmp accept', ruleset)
+        self.assertIn(
+            f'tcp dport 8118 log prefix "{NFLOG_POLICY_ALLOWED_PREFIX}" '
+            f'group {NFLOG_POLICY_DECISION_GROUP} accept',
+            ruleset,
+        )
+        self.assertIn(
+            f'ip daddr 192.168.0.170/32 meta l4proto icmp '
+            f'log prefix "{NFLOG_POLICY_ALLOWED_PREFIX}" group {NFLOG_POLICY_DECISION_GROUP} accept',
+            ruleset,
+        )
+        self.assertIn(
+            f'ip daddr 192.168.10.117/32 meta l4proto icmp '
+            f'log prefix "{NFLOG_POLICY_ALLOWED_PREFIX}" group {NFLOG_POLICY_DECISION_GROUP} accept',
+            ruleset,
+        )
         self.assertNotIn('ip saddr 10.8.0.2 meta l4proto icmp accept', ruleset)
-        self.assertIn('meta l4proto tcp redirect to :61573', ruleset)
+        self.assertIn(
+            f'meta l4proto tcp log prefix "{NFLOG_POLICY_DENIED_PREFIX}" '
+            f'group {NFLOG_POLICY_DECISION_GROUP} redirect to :61573',
+            ruleset,
+        )
         self.assertIn(f'ct status dnat tcp dport {DENIAL_RESPONSE_PORT} accept', ruleset)
-        self.assertIn('meta l4proto tcp reject with tcp reset', ruleset)
-        self.assertIn('meta l4proto udp reject with icmp port-unreachable', ruleset)
+        self.assertIn(
+            f'meta l4proto tcp log prefix "{NFLOG_POLICY_DENIED_PREFIX}" '
+            f'group {NFLOG_POLICY_DECISION_GROUP} reject with tcp reset',
+            ruleset,
+        )
+        self.assertIn(
+            f'meta l4proto udp log prefix "{NFLOG_POLICY_DENIED_PREFIX}" '
+            f'group {NFLOG_POLICY_DECISION_GROUP} reject with icmp port-unreachable',
+            ruleset,
+        )
         self.assertIn(f'tcp dport {DENIAL_RESPONSE_PORT} reject with tcp reset', ruleset)
-        self.assertLess(ruleset.index('tcp dport 8118 accept'), ruleset.index('meta l4proto tcp reject'))
+        self.assertLess(
+            ruleset.index(
+                f'tcp dport 8118 log prefix "{NFLOG_POLICY_ALLOWED_PREFIX}" '
+                f'group {NFLOG_POLICY_DECISION_GROUP} accept'
+            ),
+            ruleset.rindex('meta l4proto tcp log prefix'),
+        )
+        self.assertIn(f'log prefix "{NFLOG_POLICY_ALLOWED_PREFIX}" group {NFLOG_POLICY_DECISION_GROUP}', ruleset)
+        self.assertIn(f'log prefix "{NFLOG_POLICY_DENIED_PREFIX}" group {NFLOG_POLICY_DECISION_GROUP}', ruleset)
         self.assertIn(f'wgd-policy:{digest}', ruleset)
         self.assertNotIn("dport 22", ruleset)
 
@@ -182,10 +229,17 @@ class NetworkPolicyCompilerTest(unittest.TestCase):
         ]))
         ruleset, _ = compile_ruleset([policy])
 
-        self.assertEqual(2, ruleset.count('meta l4proto icmp accept'))
-        self.assertIn('ip daddr 192.168.0.170/32 meta l4proto icmp accept', ruleset)
-        self.assertIn('ip daddr 192.168.10.117/32 meta l4proto icmp accept', ruleset)
-        self.assertLess(ruleset.index('ip daddr 192.168.10.117/32 meta l4proto icmp accept'), ruleset.index('meta l4proto tcp reject'))
+        allowed_icmp = (
+            f'meta l4proto icmp log prefix "{NFLOG_POLICY_ALLOWED_PREFIX}" '
+            f'group {NFLOG_POLICY_DECISION_GROUP} accept'
+        )
+        self.assertEqual(2, ruleset.count(allowed_icmp))
+        self.assertIn(f'ip daddr 192.168.0.170/32 {allowed_icmp}', ruleset)
+        self.assertIn(f'ip daddr 192.168.10.117/32 {allowed_icmp}', ruleset)
+        self.assertLess(
+            ruleset.index(f'ip daddr 192.168.10.117/32 {allowed_icmp}'),
+            ruleset.rindex('meta l4proto tcp log prefix'),
+        )
 
     def test_allowed_http_destination_bypasses_denial_redirect(self):
         policy = validate_policy(policy_payload(rules=[
@@ -195,7 +249,10 @@ class NetworkPolicyCompilerTest(unittest.TestCase):
         ruleset, _ = compile_ruleset([policy])
 
         bypass = 'ip daddr 192.168.0.170/32 tcp dport 80 accept'
-        redirect = f'meta l4proto tcp redirect to :{DENIAL_RESPONSE_PORT}'
+        redirect = (
+            f'meta l4proto tcp log prefix "{NFLOG_POLICY_DENIED_PREFIX}" '
+            f'group {NFLOG_POLICY_DECISION_GROUP} redirect to :{DENIAL_RESPONSE_PORT}'
+        )
         self.assertIn(bypass, ruleset)
         self.assertIn(redirect, ruleset)
         self.assertLess(ruleset.index(bypass), ruleset.index(redirect))
@@ -207,7 +264,10 @@ class NetworkPolicyCompilerTest(unittest.TestCase):
         ruleset, _ = compile_ruleset([policy])
 
         bypass = 'ip daddr 192.168.0.170/32 tcp dport 8096 accept'
-        redirect = f'meta l4proto tcp redirect to :{DENIAL_RESPONSE_PORT}'
+        redirect = (
+            f'meta l4proto tcp log prefix "{NFLOG_POLICY_DENIED_PREFIX}" '
+            f'group {NFLOG_POLICY_DECISION_GROUP} redirect to :{DENIAL_RESPONSE_PORT}'
+        )
         self.assertIn(bypass, ruleset)
         self.assertIn(redirect, ruleset)
         self.assertLess(ruleset.index(bypass), ruleset.index(redirect))
@@ -227,7 +287,11 @@ class NetworkPolicyCompilerTest(unittest.TestCase):
             rules=[{"destination": "2001:db8:1::1", "protocol": "icmp", "ports": None}],
         ))
         ruleset, _ = compile_ruleset([policy])
-        self.assertIn('meta l4proto ipv6-icmp accept', ruleset)
+        self.assertIn(
+            f'meta l4proto ipv6-icmp log prefix "{NFLOG_POLICY_ALLOWED_PREFIX}" '
+            f'group {NFLOG_POLICY_DECISION_GROUP} accept',
+            ruleset,
+        )
 
     def test_hash_is_stable_for_rule_order(self):
         original = validate_policy(policy_payload())

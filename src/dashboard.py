@@ -42,6 +42,7 @@ from modules.NewConfigurationTemplates import NewConfigurationTemplates
 from network_policy.service import NetworkPolicyService, NetworkPolicyServiceError
 from network_policy.validation import PolicyValidationError
 from network_audit.service import NetworkAuditService, NetworkAuditServiceError
+from network_audit.sync import AuditConfigSynchronizer, NetworkAuditSyncError
 from network_audit.validation import AuditQuery, AuditValidationError
 
 class CustomJsonEncoder(DefaultJSONProvider):
@@ -214,6 +215,10 @@ with app.app_context():
     InitWireguardConfigurationsList(startup=True)
     DashboardClients: DashboardClients = DashboardClients(WireguardConfigurations)
     NetworkPolicyManager = NetworkPolicyService(DashboardConfig.engine)
+    NetworkAuditSynchronizer = AuditConfigSynchronizer(
+        interface_name=os.getenv("WGD_NETWORK_AUDIT_INTERFACE", "wg0"),
+        mode=os.getenv("WGD_NETWORK_AUDIT_MODE", "all"),
+    )
     try:
         NetworkAuditManager = NetworkAuditService()
     except NetworkAuditServiceError:
@@ -756,6 +761,8 @@ def API_updatePeerSettings(configName):
                                               keepalive,
                                               notes)
             wireguardConfig.getPeers()
+            if status:
+                _sync_network_audit_config()
             DashboardWebHooks.RunWebHook('peer_updated', {
                 "configuration": wireguardConfig.Name,
                 "peers": [id]
@@ -796,6 +803,8 @@ def API_deletePeers(configName: str) -> ResponseObject:
             return ResponseObject(False, f"Cannot safely delete Peer with an active network policy: {error}", status_code=503)
         configuration = WireguardConfigurations.get(configName)
         status, msg = configuration.deletePeers(peers, AllPeerJobs, AllPeerShareLinks)
+        if status:
+            _sync_network_audit_config()
         
         # Delete Assignment
         
@@ -1032,6 +1041,17 @@ def _network_policy_overview_peers() -> list[dict]:
     return peers
 
 
+def _sync_network_audit_config() -> None:
+    """Best-effort local sync; audit failures never alter a completed policy verdict."""
+    try:
+        NetworkAuditSynchronizer.sync(
+            _network_policy_overview_peers(),
+            NetworkPolicyManager.repository.current_records(),
+        )
+    except NetworkAuditSyncError:
+        app.logger.warning("Network audit config synchronization is unavailable")
+
+
 @app.get(f'{APP_PREFIX}/api/networkPolicy/capabilities')
 def API_NetworkPolicyCapabilities() -> ResponseObject:
     try:
@@ -1072,6 +1092,7 @@ def API_NetworkPolicyApply() -> ResponseObject:
     try:
         payload, configuration = _network_policy_payload_from_request()
         result = NetworkPolicyManager.apply(payload, _network_policy_actor())
+        _sync_network_audit_config()
         DashboardLogger.log(str(request.url), str(request.remote_addr), Message=f"Network policy applied: {configuration.Name}")
         return ResponseObject(data=result)
     except PolicyValidationError as error:
@@ -1085,6 +1106,7 @@ def API_NetworkPolicyDeactivate() -> ResponseObject:
     try:
         payload, configuration = _network_policy_payload_from_request()
         result = NetworkPolicyManager.deactivate(payload, _network_policy_actor())
+        _sync_network_audit_config()
         DashboardLogger.log(str(request.url), str(request.remote_addr), Message=f"Network policy deactivated: {configuration.Name}")
         return ResponseObject(data=result)
     except PolicyValidationError as error:
@@ -1109,6 +1131,7 @@ def API_NetworkPolicyRollback() -> ResponseObject:
             revision_policy.tunnel_address,
         )
         result = NetworkPolicyManager.rollback(revision_id, _network_policy_actor())
+        _sync_network_audit_config()
         DashboardLogger.log(str(request.url), str(request.remote_addr), Message="Network policy rolled back")
         return ResponseObject(data=result)
     except NetworkPolicyServiceError as error:
@@ -1200,6 +1223,8 @@ def API_addPeers(configName):
                 if len(keyPairs) == 0 or (bulkAdd and len(keyPairs) != bulkAddAmount):
                     return ResponseObject(False, "Generating key pairs by bulk failed")
                 status, addedPeers, message = config.addPeers(keyPairs)
+                if status:
+                    _sync_network_audit_config()
                 return ResponseObject(status=status, message=message, data=addedPeers)
     
             else:
@@ -1259,6 +1284,8 @@ def API_addPeers(configName):
                         "notes": notes
                     }]
                 )
+                if status:
+                    _sync_network_audit_config()
                 return ResponseObject(status=status, message=message, data=addedPeers)
         except Exception as e:
             app.logger.error("Add peers failed", e)
@@ -1994,6 +2021,9 @@ def index():
     response = Flask.make_response(app, render_template('index.html', APP_PREFIX=APP_PREFIX))
     response.headers['Cache-Control'] = 'no-store, max-age=0'
     return response
+
+
+_sync_network_audit_config()
 
 if __name__ == "__main__":
     startThreads()

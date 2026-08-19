@@ -1,0 +1,29 @@
+[Unit]
+Description=WGDashboard Network Audit Agent
+Documentation=https://github.com/WGDashboard/WGDashboard
+After=network-online.target systemd-tmpfiles-setup.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/WGDashboard/src
+Environment=PYTHONPATH=/opt/WGDashboard/src
+UMask=0027
+ExecStart=/usr/bin/python3 -m network_audit.agent --socket /run/wgd-network-audit/agent.sock --socket-group wgdaudit --config /run/wgd-network-audit/config.json
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+CapabilityBoundingSet=CAP_CHOWN CAP_NET_ADMIN
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/run/wgd-network-audit
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

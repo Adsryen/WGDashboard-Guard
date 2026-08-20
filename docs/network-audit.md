@@ -19,6 +19,7 @@ sudo groupadd --system wgdaudit
 sudo install -D -m 0644 deploy/systemd/wgd-network-audit-agent.service /etc/systemd/system/wgd-network-audit-agent.service
 sudo install -D -m 0644 deploy/systemd/wgd-network-audit-collector.service /etc/systemd/system/wgd-network-audit-collector.service
 sudo install -D -m 0644 deploy/systemd/wgd-network-audit-alerts.service /etc/systemd/system/wgd-network-audit-alerts.service
+sudo install -D -m 0644 deploy/systemd/wg-dashboard-audit.conf /etc/systemd/system/wg-dashboard.service.d/network-audit.conf
 sudo install -D -m 0644 deploy/systemd/tmpfiles.d/wgd-network-audit.conf /etc/tmpfiles.d/wgd-network-audit.conf
 sudo systemd-tmpfiles --create /etc/tmpfiles.d/wgd-network-audit.conf
 sudo systemctl daemon-reload
@@ -35,6 +36,8 @@ sudo systemctl restart wg-dashboard.service
 ```
 
 The included units assume `/opt/WGDashboard/src` and its `venv/bin/python3` interpreter. Keep `WorkingDirectory`, `PYTHONPATH`, `ExecStart`, and the relative `db/wgdashboard_audit_sync.json` path aligned when using a different installation location or virtual environment.
+
+The agent waits for its Unix socket before Dashboard startup. The `wg-dashboard` drop-in starts the agent whenever Dashboard starts, so the initial configuration synchronization does not race the collector.
 
 ## Verification and recovery
 

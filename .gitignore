@@ -11,6 +11,7 @@ src/wg-dashboard.ini
 src/static/pic.xd
 *.conf
 !deploy/systemd/tmpfiles.d/*.conf
+!deploy/systemd/wg-dashboard-audit.conf
 private_key.txt
 public_key.txt
 *venv*

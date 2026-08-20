@@ -1347,6 +1347,16 @@ def API_NetworkPolicyOverview() -> ResponseObject:
     return ResponseObject(data=NetworkPolicyManager.overview(_network_policy_overview_peers()))
 
 
+@app.post(f'{APP_PREFIX}/api/networkPolicy/sync')
+def API_NetworkPolicySync() -> ResponseObject:
+    try:
+        result = NetworkPolicyManager.synchronize_runtime()
+        DashboardLogger.log(str(request.url), str(request.remote_addr), Message="Network policy runtime synchronized")
+        return ResponseObject(data=result)
+    except NetworkPolicyServiceError as error:
+        return ResponseObject(False, str(error), status_code=503)
+
+
 @app.post(f'{APP_PREFIX}/api/networkPolicy/get')
 def API_NetworkPolicyGet() -> ResponseObject:
     try:

@@ -78,6 +78,49 @@ class NetworkPolicyService:
     def details(self, configuration_name: str, peer_public_key: str, tunnel_address: str) -> dict[str, Any]:
         return self.repository.details(configuration_name, peer_public_key, tunnel_address)
 
+    def _active_bound_policies(self) -> list[NetworkPolicy]:
+        """Build the complete desired set without creating a policy revision."""
+        records = self.repository.current_records()
+        policies = [
+            record["policy"]
+            for record in records
+            if record["managed"] and record["binding_status"] == "bound"
+        ]
+        return sorted(
+            policies,
+            key=lambda policy: (
+                policy.interface_name,
+                policy.tunnel_address,
+                policy.peer_public_key,
+            ),
+        )
+
+    def synchronize_runtime(self) -> dict[str, Any]:
+        """Apply the complete persisted policy set and verify the loaded Agent hash."""
+        desired = self._active_bound_policies()
+        expected_hash = policy_hash(desired)
+        try:
+            agent_result = self.agent_client.request("apply", desired)
+            status = self.agent_client.request("status")
+        except (NetworkPolicyServiceError, PolicyValidationError, ValueError) as error:
+            raise NetworkPolicyServiceError(str(error)) from error
+
+        loaded_hash = status.get("ruleset_hash")
+        if not desired and loaded_hash is None and status.get("table_present", True):
+            loaded_hash = expected_hash
+        if not isinstance(loaded_hash, str):
+            raise NetworkPolicyServiceError("policy agent returned an invalid runtime status")
+        if loaded_hash != expected_hash:
+            raise NetworkPolicyServiceError(
+                f"network policy runtime hash mismatch: expected {expected_hash}, loaded {loaded_hash}"
+            )
+        return {
+            "status": "in_sync",
+            "expected_hash": expected_hash,
+            "loaded_hash": loaded_hash,
+            "agent": agent_result,
+        }
+
     def overview(self, peers: list[dict[str, Any]]) -> dict[str, Any]:
         """Join live Peers with persisted policies without making unmanaged Peers restrictive."""
         records = self.repository.current_records()

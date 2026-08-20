@@ -1,14 +1,18 @@
 <script setup>
 import {computed, defineAsyncComponent, ref} from "vue";
-import {fetchGet} from "@/utilities/fetch.js";
+import {fetchGet, getUrl} from "@/utilities/fetch.js";
 import LocaleText from "@/components/text/localeText.vue";
 import {GetLocale} from "@/utilities/locale.js";
 import {createPolicyTarget} from "@/components/networkPolicy/policyTarget.js";
+import {DashboardConfigurationStore} from "@/stores/DashboardConfigurationStore.js";
 
 const NetworkPolicyModal = defineAsyncComponent(() => import("@/components/networkPolicy/networkPolicyModal.vue"));
 
 const loading = ref(true);
 const error = ref("");
+const syncing = ref(false);
+const syncError = ref("");
+const syncSuccess = ref(false);
 const rows = ref([]);
 const runtime = ref({status: "not_applicable"});
 const selectedTarget = ref(null);
@@ -33,18 +37,42 @@ const runtimeMessage = computed(() => ({
 	unavailable: "nftables state could not be verified"
 }[runtime.value.status]));
 
-const loadOverview = async () => {
+const runtimeSyncHeaders = () => {
+	const headers = {"Content-Type": "application/json"};
+	const crossServer = DashboardConfigurationStore().getActiveCrossServer();
+	if (crossServer){
+		headers["wg-dashboard-apikey"] = crossServer.apiKey;
+		if (crossServer.headers){
+			for (const header of Object.values(crossServer.headers)){
+				if (header.key && header.value && !Object.prototype.hasOwnProperty.call(headers, header.key)){
+					headers[header.key] = header.value;
+				}
+			}
+		}
+	}
+	return headers;
+};
+
+const loadOverview = async (clearRuntimeFeedback = true) => {
 	loading.value = true;
 	error.value = "";
+	if (clearRuntimeFeedback){
+		syncError.value = "";
+		syncSuccess.value = false;
+	}
+	let loaded = false;
 	await fetchGet("/api/networkPolicy/overview", {}, (res) => {
 		if (res.status){
 			rows.value = res.data?.rows || [];
 			runtime.value = res.data?.runtime || {status: "not_applicable"};
+			loaded = true;
 		}else{
 			error.value = res.message || GetLocale("Failed");
 		}
 		loading.value = false;
 	});
+	loading.value = false;
+	return loaded;
 };
 
 await loadOverview();
@@ -102,6 +130,40 @@ const closePolicy = async () => {
 	policyModalOpen.value = false;
 	await loadOverview();
 };
+
+const syncRuntime = async () => {
+	if (runtime.value.status !== "out_of_sync" || syncing.value) return;
+	syncing.value = true;
+	syncError.value = "";
+	syncSuccess.value = false;
+	try {
+		const response = await fetch(getUrl("/api/networkPolicy/sync"), {
+			method: "POST",
+			headers: runtimeSyncHeaders(),
+			credentials: "same-origin",
+			body: JSON.stringify({})
+		});
+		let result;
+		try {
+			result = await response.json();
+		}catch (_error){
+			result = null;
+		}
+		if (!response.ok || result?.status !== true || result.data?.status !== "in_sync"){
+			throw new Error(result?.message || GetLocale("Unable to synchronize nftables rules"));
+		}
+		if (!await loadOverview(false)){
+			throw new Error(GetLocale("Unable to refresh network policy status"));
+		}
+		syncSuccess.value = true;
+	}catch (requestError){
+		syncError.value = requestError instanceof Error
+			? requestError.message
+			: GetLocale("Unable to synchronize nftables rules");
+	}finally {
+		syncing.value = false;
+	}
+};
 </script>
 
 <template>
@@ -111,8 +173,8 @@ const closePolicy = async () => {
 				<h2 class="mb-1"><i class="bi bi-shield-lock me-2"></i><LocaleText t="Network policy overview" /></h2>
 				<p class="text-muted mb-0"><LocaleText t="Review forwarding access rules for every Peer" /></p>
 			</div>
-			<button class="btn btn-outline-secondary ms-md-auto" type="button" :disabled="loading" :title="GetLocale('Refresh')" @click="loadOverview">
-				<i :class="['bi bi-arrow-clockwise', {spin: loading}]"></i>
+			<button class="btn btn-outline-secondary ms-md-auto" type="button" :disabled="loading || syncing" :title="GetLocale('Refresh')" @click="loadOverview()">
+				<i :class="['bi bi-arrow-clockwise', {spin: loading || syncing}]"></i>
 			</button>
 		</div>
 
@@ -124,9 +186,22 @@ const closePolicy = async () => {
 				</button>
 			</div>
 		</div>
-		<div v-if="runtimeMessage" class="alert py-2 small d-flex align-items-center gap-2" :class="runtimeClass">
+		<div v-if="runtimeMessage" class="alert py-2 small d-flex flex-wrap align-items-center gap-2" :class="runtimeClass" role="status" aria-live="polite">
 			<i :class="runtime.status === 'in_sync' ? 'bi bi-shield-check' : 'bi bi-shield-exclamation'"></i>
 			<span><LocaleText :t="runtimeMessage" /></span>
+			<button v-if="runtime.status === 'out_of_sync'" class="btn btn-sm btn-danger ms-auto" type="button" :disabled="loading || syncing" @click="syncRuntime">
+				<span v-if="syncing" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+				<i v-else class="bi bi-arrow-repeat me-1"></i>
+				<LocaleText :t="syncing ? 'Syncing nftables rules...' : 'Sync nftables rules'" />
+			</button>
+		</div>
+		<div v-if="syncSuccess" class="alert alert-success py-2 small d-flex align-items-center gap-2" role="status" aria-live="polite">
+			<i class="bi bi-check-circle"></i>
+			<span><LocaleText t="nftables rules synchronized successfully" /></span>
+		</div>
+		<div v-if="syncError" class="alert alert-danger py-2 small d-flex align-items-center gap-2" role="alert">
+			<i class="bi bi-exclamation-triangle"></i>
+			<span><LocaleText t="Runtime synchronization failed" />: {{ syncError }}</span>
 		</div>
 
 		<div class="toolbar border-top border-bottom py-3 mb-3 d-flex flex-column flex-lg-row gap-2">

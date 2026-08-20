@@ -458,17 +458,25 @@ class NftablesExecutorTest(unittest.TestCase):
 class FakePolicyAgent:
     def __init__(self):
         self.fail = False
+        self.fail_status = False
+        self.status_hash = None
+        self.status_hash_override = None
         self.requests = []
 
     def request(self, action, policies=None):
         self.requests.append((action, policies))
         if self.fail and action == "apply":
             raise NetworkPolicyServiceError("simulated nftables failure")
+        if self.fail_status and action == "status":
+            raise NetworkPolicyServiceError("simulated status failure")
         if action == "dry_run":
             return {"ruleset": "checked", "hash": "a" * 64, "applied": False}
         if action == "capabilities":
             return {"capabilities": {"supported": True}}
-        return {"hash": "b" * 64, "applied": True}
+        if action == "status":
+            return {"ruleset_hash": self.status_hash_override or self.status_hash}
+        self.status_hash = policy_hash(policies) if policies else None
+        return {"hash": self.status_hash, "applied": True}
 
 
 @unittest.skipIf(db is None, "SQLAlchemy is required for Dashboard persistence tests")
@@ -514,6 +522,76 @@ class NetworkPolicyServiceTest(unittest.TestCase):
         details = self.service.details("wg0", PUBLIC_KEY, "10.8.0.2")
 
         self.assertEqual(validate_policy(original).to_payload(), details["revisions"][0]["policy"])
+
+    def test_runtime_sync_applies_only_complete_managed_bound_policy_set(self):
+        first = policy_payload()
+        second = policy_payload(
+            configuration_name="wg1",
+            interface_name="wg1",
+            peer_public_key="b" * 43 + "=",
+            tunnel_address="10.9.0.2",
+        )
+        self.service.apply(first, "test-actor")
+        self.service.apply(second, "test-actor")
+        with self.engine.begin() as connection:
+            connection.execute(
+                self.service.repository.policies.update()
+                .where(self.service.repository.policies.c.PeerPublicKey == second["peer_public_key"])
+                .values(BindingStatus="orphaned")
+            )
+
+        self.agent.requests.clear()
+        result = self.service.synchronize_runtime()
+
+        self.assertEqual("in_sync", result["status"])
+        self.assertEqual(result["expected_hash"], result["loaded_hash"])
+        self.assertEqual(["apply", "status"], [action for action, _ in self.agent.requests])
+        self.assertEqual([PUBLIC_KEY], [policy.peer_public_key for policy in self.agent.requests[0][1]])
+
+    def test_runtime_sync_supports_empty_target_set_and_does_not_create_revisions(self):
+        before_records = self.service.repository.current_records()
+        before_revision_count = self._count(self.service.repository.revisions)
+        before_apply_count = self._count(self.service.repository.applies)
+
+        result = self.service.synchronize_runtime()
+
+        self.assertEqual("in_sync", result["status"])
+        self.assertEqual([], self.agent.requests[0][1])
+        self.assertEqual(before_records, self.service.repository.current_records())
+        self.assertEqual(before_revision_count, self._count(self.service.repository.revisions))
+        self.assertEqual(before_apply_count, self._count(self.service.repository.applies))
+
+    def test_runtime_sync_maps_apply_and_status_failures_without_database_mutation(self):
+        self.service.apply(policy_payload(), "test-actor")
+        before_records = self.service.repository.current_records()
+        before_revision_count = self._count(self.service.repository.revisions)
+        before_apply_count = self._count(self.service.repository.applies)
+
+        self.agent.fail = True
+        with self.assertRaises(NetworkPolicyServiceError):
+            self.service.synchronize_runtime()
+        self.assertEqual(before_records, self.service.repository.current_records())
+        self.assertEqual(before_revision_count, self._count(self.service.repository.revisions))
+        self.assertEqual(before_apply_count, self._count(self.service.repository.applies))
+
+        self.agent.fail = False
+        self.agent.fail_status = True
+        with self.assertRaises(NetworkPolicyServiceError):
+            self.service.synchronize_runtime()
+        self.assertEqual(before_records, self.service.repository.current_records())
+        self.assertEqual(before_revision_count, self._count(self.service.repository.revisions))
+        self.assertEqual(before_apply_count, self._count(self.service.repository.applies))
+
+    def test_runtime_sync_rejects_unverified_loaded_hash(self):
+        self.service.apply(policy_payload(), "test-actor")
+        self.agent.status_hash_override = "0" * 64
+
+        with self.assertRaises(NetworkPolicyServiceError):
+            self.service.synchronize_runtime()
+
+    def _count(self, table):
+        with self.engine.connect() as connection:
+            return connection.scalar(db.select(db.func.count()).select_from(table))
 
 
 if __name__ == "__main__":

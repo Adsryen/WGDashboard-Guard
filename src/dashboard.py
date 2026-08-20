@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import sqlalchemy
 from jinja2 import Template
-from flask import Flask, request, render_template, session, send_file, current_app
+from flask import Flask, Response, request, render_template, session, send_file, current_app
 from flask_cors import CORS
 from icmplib import ping, traceroute
 from flask.json.provider import DefaultJSONProvider
@@ -962,7 +962,7 @@ def _network_policy_actor() -> str:
     return NetworkPolicyManager.actor_from_session(session.get("username"))
 
 
-def _network_audit_admin_response() -> ResponseObject | None:
+def _network_audit_admin_response() -> Response | None:
     """Audit metadata is unavailable to API-key and client sessions."""
     if (
         request.headers.get("wg-dashboard-apikey") is not None

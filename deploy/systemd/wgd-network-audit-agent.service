@@ -2,6 +2,7 @@
 Description=WGDashboard Network Audit Agent
 Documentation=https://github.com/WGDashboard/WGDashboard
 After=network-online.target systemd-tmpfiles-setup.service
+Before=wg-dashboard.service
 Wants=network-online.target
 
 [Service]
@@ -12,6 +13,7 @@ WorkingDirectory=/opt/WGDashboard/src
 Environment=PYTHONPATH=/opt/WGDashboard/src
 UMask=0027
 ExecStart=/opt/WGDashboard/src/venv/bin/python3 -m network_audit.agent --socket /run/wgd-network-audit/agent.sock --socket-group wgdaudit --config /run/wgd-network-audit/config.json
+ExecStartPost=/bin/sh -ec 'for attempt in 1 2 3 4 5 6 7 8 9 10; do test -S /run/wgd-network-audit/agent.sock && exit 0; sleep 1; done; exit 1'
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=15

@@ -12,7 +12,7 @@ WorkingDirectory=/opt/WGDashboard/src
 Environment=PYTHONPATH=/opt/WGDashboard/src
 Environment=CONFIGURATION_PATH=/opt/WGDashboard/src
 UMask=0027
-ExecStart=/usr/bin/python3 -m network_audit.alerts --database /opt/WGDashboard/src/db/wgdashboard_audit.db --health /run/wgd-network-audit/health.json --config /opt/WGDashboard/src/wg-dashboard.ini --interval-seconds 60
+ExecStart=/opt/WGDashboard/src/venv/bin/python3 -m network_audit.alerts --database /opt/WGDashboard/src/db/wgdashboard_audit.db --health /run/wgd-network-audit/health.json --config /opt/WGDashboard/src/wg-dashboard.ini --interval-seconds 60
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=15

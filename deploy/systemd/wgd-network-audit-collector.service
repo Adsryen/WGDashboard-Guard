@@ -12,7 +12,7 @@ Group=root
 WorkingDirectory=/opt/WGDashboard/src
 Environment=PYTHONPATH=/opt/WGDashboard/src
 UMask=0027
-ExecStart=/usr/bin/python3 -m network_audit.collector --config /run/wgd-network-audit/config.json --spool /var/lib/wgd-network-audit/spool.db --health /run/wgd-network-audit/health.json
+ExecStart=/opt/WGDashboard/src/venv/bin/python3 -m network_audit.collector --config /run/wgd-network-audit/config.json --spool /var/lib/wgd-network-audit/spool.db --health /run/wgd-network-audit/health.json
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=15

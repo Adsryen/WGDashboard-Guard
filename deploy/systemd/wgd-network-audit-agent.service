@@ -11,7 +11,7 @@ Group=root
 WorkingDirectory=/opt/WGDashboard/src
 Environment=PYTHONPATH=/opt/WGDashboard/src
 UMask=0027
-ExecStart=/usr/bin/python3 -m network_audit.agent --socket /run/wgd-network-audit/agent.sock --socket-group wgdaudit --config /run/wgd-network-audit/config.json
+ExecStart=/opt/WGDashboard/src/venv/bin/python3 -m network_audit.agent --socket /run/wgd-network-audit/agent.sock --socket-group wgdaudit --config /run/wgd-network-audit/config.json
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=15

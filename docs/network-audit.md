@@ -34,7 +34,7 @@ sudo usermod -aG wgdaudit <wgdashboard-service-user>
 sudo systemctl restart wg-dashboard.service
 ```
 
-The included units assume `/opt/WGDashboard/src` and `/usr/bin/python3`. Keep `WorkingDirectory`, `PYTHONPATH`, `ExecStart`, and the relative `db/wgdashboard_audit_sync.json` path aligned when using a different installation location or virtual environment.
+The included units assume `/opt/WGDashboard/src` and its `venv/bin/python3` interpreter. Keep `WorkingDirectory`, `PYTHONPATH`, `ExecStart`, and the relative `db/wgdashboard_audit_sync.json` path aligned when using a different installation location or virtual environment.
 
 ## Verification and recovery
 
@@ -56,7 +56,7 @@ The alert runner can be exercised without sending a loop:
 
 ```bash
 sudo -u root env PYTHONPATH=/opt/WGDashboard/src CONFIGURATION_PATH=/opt/WGDashboard/src \
-  /usr/bin/python3 -m network_audit.alerts \
+  /opt/WGDashboard/src/venv/bin/python3 -m network_audit.alerts \
   --database /opt/WGDashboard/src/db/wgdashboard_audit.db \
   --health /run/wgd-network-audit/health.json \
   --config /opt/WGDashboard/src/wg-dashboard.ini --once

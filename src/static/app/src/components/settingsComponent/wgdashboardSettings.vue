@@ -11,6 +11,7 @@ import AccountSettingsMFA from "@/components/settingsComponent/accountSettingsMF
 import AccountSettingsInputUsername from "@/components/settingsComponent/accountSettingsInputUsername.vue";
 import DashboardEmailSettings from "@/components/settingsComponent/dashboardEmailSettings.vue";
 import DashboardWebHooks from "@/components/settingsComponent/dashboardWebHooks.vue";
+import DashboardSessionSettings from "@/components/settingsComponent/dashboardSessionSettings.vue";
 
 const dashboardConfigurationStore = DashboardConfigurationStore()
 
@@ -67,12 +68,16 @@ const dashboardConfigurationStore = DashboardConfigurationStore()
 					</AccountSettingsInputPassword>
 				</div>
 				<hr>
-				<div>
-					<h6 >
-						<LocaleText t="Multi-Factor Authentication (MFA)"></LocaleText>
-					</h6>
-					<AccountSettingsMFA v-if="!dashboardConfigurationStore.getActiveCrossServer()"></AccountSettingsMFA>
-				</div>
+					<div>
+						<h6 >
+							<LocaleText t="Multi-Factor Authentication (MFA)"></LocaleText>
+						</h6>
+						<AccountSettingsMFA v-if="!dashboardConfigurationStore.getActiveCrossServer()"></AccountSettingsMFA>
+					</div>
+					<hr>
+					<div>
+						<DashboardSessionSettings></DashboardSessionSettings>
+					</div>
 			</div>
 		</div>
 

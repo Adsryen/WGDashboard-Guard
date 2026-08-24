@@ -38,6 +38,7 @@ export default {
 				username: "",
 				password: "",
 				totp: "",
+				trust_device: false,
 			},
 			loginError: false,
 			loginErrorMessage: "",
@@ -154,6 +155,16 @@ export default {
 						<label for="floatingInput" class="d-flex">
 							<i class="bi bi-lock-fill me-2"></i>
 							<LocaleText t="OTP from your authenticator"></LocaleText>
+						</label>
+					</div>
+					<div class="form-check mb-2" v-if="this.totpEnabled">
+						<input class="form-check-input"
+						       type="checkbox"
+						       id="trust_device"
+						       :disabled="loading"
+						       v-model="this.data.trust_device">
+						<label class="form-check-label" for="trust_device">
+							<LocaleText t="Trust this device"></LocaleText>
 						</label>
 					</div>
 					<button class="btn btn-lg btn-dark ms-auto mt-5 w-100 d-flex btn-brand signInBtn rounded-3" 

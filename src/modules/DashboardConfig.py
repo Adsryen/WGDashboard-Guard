@@ -21,7 +21,7 @@ class DashboardConfig:
             open(DashboardConfig.ConfigurationFilePath, "x")
         self.__config = configparser.RawConfigParser(strict=False)
         self.__config.read_file(open(DashboardConfig.ConfigurationFilePath, "r+"))
-        self.hiddenAttribute = ["totp_key", "auth_req"]
+        self.hiddenAttribute = ["totp_key", "auth_req", "session_secret"]
         self.__default = {
             "Account": {
                 "username": "admin",
@@ -43,7 +43,9 @@ class DashboardConfig:
                 "dashboard_sort": "status",
                 "dashboard_theme": "dark",
                 "dashboard_api_key": "false",
-                "dashboard_language": "en-US"
+                "dashboard_language": "en-US",
+                "session_secret": secrets.token_urlsafe(48),
+                "session_lifetime_hours": "168"
             },
             "Peers": {
                 "peer_global_DNS": "1.1.1.1",
@@ -243,6 +245,9 @@ class DashboardConfig:
         if section == "Server" and key == "wg_conf_path":
             if not os.path.exists(value):
                 return False, f"{value} is not a valid path"
+        if section == "Server" and key == "session_lifetime_hours":
+            if type(value) is not int or not 1 <= value <= 8760:
+                return False, "Session lifetime must be an integer between 1 and 8760 hours."
         if section == "Account" and key == "password":
             if self.GetConfig("Account", "password")[0]:
                 if not self.__checkPassword(
@@ -285,7 +290,7 @@ class DashboardConfig:
     def __checkPassword(self, plainTextPassword: str, hashedPassword: bytes):
         return bcrypt.checkpw(plainTextPassword.encode("utf-8"), hashedPassword)
 
-    def SetConfig(self, section: str, key: str, value: str | bool | list[str] | dict[str, str], init: bool = False) -> tuple[bool, str] | tuple[bool, None]:
+    def SetConfig(self, section: str, key: str, value: str | int | bool | list[str] | dict[str, str], init: bool = False) -> tuple[bool, str] | tuple[bool, None]:
         if key in self.hiddenAttribute and not init:
             return False, None
 

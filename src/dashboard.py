@@ -202,11 +202,14 @@ CONFIGURATION_PATH = os.getenv('CONFIGURATION_PATH', '.')
 
 # Revalidate assets so a deployed policy UI cannot keep serving stale dynamic chunks.
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
-app.secret_key = secrets.token_urlsafe(32)
 app.json = CustomJsonEncoder(app)
 with app.app_context():
     SystemStatus = SystemStatus()
     DashboardConfig = DashboardConfig()
+    app.secret_key = DashboardConfig.GetConfig("Server", "session_secret")[1]
+    app.permanent_session_lifetime = timedelta(
+        hours=int(DashboardConfig.GetConfig("Server", "session_lifetime_hours")[1])
+    )
     EmailSender = EmailSender(DashboardConfig)
     AllPeerShareLinks: PeerShareLinks = PeerShareLinks(DashboardConfig, WireguardConfigurations)
     AllPeerJobs: PeerJobs = PeerJobs(DashboardConfig, WireguardConfigurations, AllPeerShareLinks)
@@ -307,11 +310,24 @@ def API_Handshake():
 
 @app.get(f'{APP_PREFIX}/api/validateAuthentication')
 def API_ValidateAuthentication():
-    token = request.cookies.get("authToken")
     if DashboardConfig.GetConfig("Server", "auth_req")[1]:
-        if token is None or token == "" or "username" not in session or session["username"] != token:
+        if "username" not in session or session.get("role") != "admin":
             return ResponseObject(False, "Invalid authentication.")
     return ResponseObject(True)
+
+
+def _set_authentication_cookie(response, token, persistent=False):
+    max_age = None
+    if persistent:
+        max_age = int(DashboardConfig.GetConfig("Server", "session_lifetime_hours")[1]) * 60 * 60
+    response.set_cookie(
+        "authToken",
+        token,
+        max_age=max_age,
+        httponly=True,
+        samesite="Lax",
+        secure=request.is_secure,
+    )
 
 @app.get(f'{APP_PREFIX}/api/requireAuthentication')
 def API_RequireAuthentication():
@@ -324,13 +340,13 @@ def API_AuthenticateLogin():
         return ResponseObject(True, DashboardConfig.GetConfig("Other", "welcome_session")[1])
     
     if DashboardConfig.APIAccessed:
-        authToken = hashlib.sha256(f"{request.headers.get('wg-dashboard-apikey')}{datetime.now()}".encode()).hexdigest()
+        authToken = secrets.token_urlsafe(32)
         session['role'] = 'admin'
         session['username'] = authToken
         session['auth_source'] = 'api_key'
-        resp = ResponseObject(True, DashboardConfig.GetConfig("Other", "welcome_session")[1])
-        resp.set_cookie("authToken", authToken)
         session.permanent = True
+        resp = ResponseObject(True, DashboardConfig.GetConfig("Other", "welcome_session")[1])
+        _set_authentication_cookie(resp, authToken, persistent=True)
         return resp
     valid = bcrypt.checkpw(data['password'].encode("utf-8"),
                            DashboardConfig.GetConfig("Account", "password")[1].encode("utf-8"))
@@ -343,13 +359,15 @@ def API_AuthenticateLogin():
             and data['username'] == DashboardConfig.GetConfig("Account", "username")[1]
             and ((totpEnabled and totpValid) or not totpEnabled)
     ):
-        authToken = hashlib.sha256(f"{data['username']}{datetime.now()}".encode()).hexdigest()
+        authToken = secrets.token_urlsafe(32)
+        trustDevice = data.get("trust_device") is True
         session['role'] = 'admin'
         session['username'] = authToken
         session['auth_source'] = 'dashboard_login'
+        persistentSession = trustDevice or not totpEnabled
+        session.permanent = persistentSession
         resp = ResponseObject(True, DashboardConfig.GetConfig("Other", "welcome_session")[1])
-        resp.set_cookie("authToken", authToken)
-        session.permanent = True
+        _set_authentication_cookie(resp, authToken, persistent=persistentSession)
         DashboardLogger.log(str(request.url), str(request.remote_addr), Message=f"Login success: {data['username']}")
         return resp
     DashboardLogger.log(str(request.url), str(request.remote_addr), Message=f"Login failed: {data['username']}")
@@ -361,7 +379,7 @@ def API_AuthenticateLogin():
 @app.get(f'{APP_PREFIX}/api/signout')
 def API_SignOut():
     resp = ResponseObject(True, "")
-    resp.delete_cookie("authToken")
+    resp.delete_cookie("authToken", httponly=True, samesite="Lax", secure=request.is_secure)
     session.clear()
     return resp
 
@@ -695,6 +713,8 @@ def API_updateDashboardConfigurationItem():
             WireguardConfigurations.clear()
             WireguardConfigurations.clear()
             InitWireguardConfigurationsList()
+        if data['key'] == 'session_lifetime_hours':
+            app.permanent_session_lifetime = timedelta(hours=int(data['value']))
     return ResponseObject(True, data=DashboardConfig.GetConfig(data["section"], data["key"])[1])
 
 @app.get(f'{APP_PREFIX}/api/getDashboardAPIKeys')

@@ -1,87 +1,115 @@
-> [!WARNING]
-> All users running WGDashboard v4.2.x or later and hosted on the public internet are strongly advised to update to the latest release immediately. For more information: [v4.3.2 Release](https://github.com/WGDashboard/WGDashboard/releases/tag/v4.3.2)
+# WGDashboard-Guard
 
-> [!TIP]
-> 🎉 To help us better understand and improve WGDashboard’s performance, we’re launching the **WGDashboard Testing Program**. As part of this program, participants will receive free WireGuard VPN access to our server in Toronto, Canada, valid for **24 hours** or up to **1GB of total traffic**—whichever comes first. If you’d like to join, visit [https://wg.wgdashboard.dev/](https://wg.wgdashboard.dev/) for more details!
+[English](README.en.md) · 中文
 
+一个面向 WireGuard 的 Web 管理面板增强版，提供配置管理、Peer 管理、网络策略和网络审计能力。
 
-![](https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Posters/Banner.png)
+> 本项目基于 [WGDashboard](https://github.com/donaldzou/WGDashboard) 二次开发。感谢上游项目作者 Donald Zou 及 WGDashboard 社区提供的基础能力和持续维护。
 
+## 项目定位
 
-<p align="center">
-  <img alt="WGDashboard" src="https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Logos/Logo-2-Rounded-512x512.png" width="128">
-</p>
-<h1 align="center">
-  <a href="https://wgdashboard.dev">WGDashboard</a>
-</h1>
-<p align="center">
-    <img src="https://img.shields.io/badge/Made_With-Python-blue?style=for-the-badge&logo=python&logoColor=ffffff">
-    <img src="https://img.shields.io/badge/Made_With-Vue.js-42b883?style=for-the-badge&logo=vuedotjs&logoColor=ffffff">
-    <img src="https://img.shields.io/badge/License-Apache_License_2.0-D22128?style=for-the-badge&logo=apache&logoColor=ffffff">
-</p>
+WGDashboard-Guard 不是官方 WireGuard 项目，也不代表上游 WGDashboard。它在上游基础上重点增强：
 
-<p align="center">
-  <a href="https://github.com/WGDashboard/WGDashboard/releases/latest"><img src="https://img.shields.io/github/v/release/donaldzou/wireguard-dashboard?style=for-the-badge"></a>
-  <a href="https://wakatime.com/badge/github/donaldzou/WGDashboard"><img src="https://wakatime.com/badge/user/45f53c7c-9da9-4cb0-85d6-17bd38cc748b/project/5334ae20-e9a6-4c55-9fea-52d4eb9dfba6.svg?style=for-the-badge" alt="wakatime"></a>
-  <a href="https://hitscounter.dev"><img src="https://hitscounter.dev/api/hit?url=https%3A%2F%2Fgithub.com%2Fdonaldzou%2FWGDashboard&label=Visitor&icon=github&color=%230a58ca&style=for-the-badge"></a>
-  <img src="https://img.shields.io/docker/pulls/donaldzou/wgdashboard?logo=docker&label=Docker%20Image%20Pulls&labelColor=ffffff&style=for-the-badge">
-  <img src="https://github.com/WGDashboard/WGDashboard/actions/workflows/docker.yml/badge.svg?style=for-the-badge">
-  <img src="https://github.com/WGDashboard/WGDashboard/actions/workflows/codeql-analyze.yaml/badge.svg">
-</p>
-<p align="center"><b>This project is supported by</b></p>
-<p align="center">
-  <a href="https://m.do.co/c/a84cb9aac585">
-    <img src="https://opensource.nyc3.cdn.digitaloceanspaces.com/attribution/assets/SVG/DO_Logo_horizontal_blue.svg" width="201px">
-  </a>
-</p>
-<p align="center">Monitoring WireGuard is not convenient, in most case, you'll need to login to your server and type <code>wg show</code>. That's why this project is being created, to view and manage all WireGuard configurations in an easy way.</p>
-<p align="center">Though all these awesome features are present, we are still striving to make it <b>easy to install and use</b></p>
+- 网络策略管理与运行状态同步
+- WireGuard 转发流量审计、模糊筛选和告警
+- “是否属于隧道网段”和“是否命中策略允许目标”判断
+- TOTP 多因素认证和可信设备会话
+- 可选 HTTPS 证书加载
+- 原生 systemd 和 Docker Compose 部署方式
 
-<p align="center"><b><i>This project is not affiliated to the official WireGuard Project</i></b></p>
+## 快速部署
 
-<h3 align="center">Looking for help or want to chat about this project?</h4>
-<p align="center">
-  You can reach out at
-</p>
-<p align="center">
-  <a align="center" href="https://discord.gg/72TwzjeuWm" target="_blank"><img src="https://img.shields.io/discord/1276818723637956628?labelColor=ffffff&style=for-the-badge&logo=discord&label=Discord"></a>
-  <a align="center" href="https://www.reddit.com/r/WGDashboard/" target="_blank"><img src="https://img.shields.io/badge/Reddit-r%2FWGDashboard-FF4500?style=for-the-badge&logo=reddit"></a>
-  <a align="center" href="https://app.element.io/#/room/#wgd:matrix.org" target="_blank"><img src="https://img.shields.io/badge/Matrix_Chatroom-%23WGD-000000?style=for-the-badge&logo=matrix"></a>
-</p>
-<h3 align="center">Want to support this project?</h4>
-<p align="center">
-  You can support via <br>
-</p>
-<p align="center">
-  <a align="center" href="https://github.com/sponsors/WGDashboard" target="_blank"><img src="https://img.shields.io/badge/GitHub%20Sponsor-2e9a40?style=for-the-badge&logo=github"></a>
-  <a align="center" href="https://buymeacoffee.com/donaldzou" target="_blank"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-ffdd00?style=for-the-badge&logo=buymeacoffee&logoColor=000000"></a>
-  <a align="center" href="https://patreon.com/c/DonaldDonnyZou/membership" target="_blank"><img src="https://img.shields.io/badge/Patreon-000000?style=for-the-badge&logo=patreon&logoColor=ffffff"></a>
-</p>
+### 方式一：Ubuntu/Debian 一键安装
 
-<p align="center">
-  <b>or, visit our merch store and support us by purchasing a merch for only $USD 17.00 (Including shipping worldwide & duties)</b>
-</p>
-<p align="center">
-  <a align="center" href="https://merch.wgdashboard.dev" target="_blank"><img src="https://img.shields.io/badge/Merch%20from%20WGDashboard-926183?style=for-the-badge"></a>
-</p>
+建议在全新的 Ubuntu/Debian 主机上执行。脚本会安装 Python、WireGuard 工具和依赖，复制当前代码到 `/opt/WGDashboard`，创建 systemd 服务，并保留已有配置和数据。
 
-<hr>
-<h4 align="center">
-  for more information, visit our
-</h4>
-<h1 align="center">
-  <a href="https://wgdashboard.dev">Official Website</a>
-</h1>
+```bash
+git clone https://github.com/Adsryen/WGDashboard-Guard.git
+cd WGDashboard-Guard
+sudo ./scripts/install.sh
+```
 
+安装完成后检查服务：
 
-# Screenshots
-<img src="https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Documentation%20Images/sign-in.png" alt=""/>
-<img src="https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Documentation%20Images/cross-server.png" alt=""/>
-<img src="https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Documentation%20Images/index.png" alt=""/>
-<img src="https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Documentation%20Images/new-configuration.png" alt="" />
-<img src="https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Documentation%20Images/settings.png" alt="" />
-<img src="https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Documentation%20Images/light-dark.png" alt="" />
-<img src="https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Documentation%20Images/configuration.png" alt=""/>
-<img src="https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Documentation%20Images/add-peers.png" alt="" />
-<img src="https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Documentation%20Images/ping.png" alt=""/>
-<img src="https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Documentation%20Images/traceroute.png" alt=""/>
+```bash
+sudo systemctl status wg-dashboard
+sudo journalctl -u wg-dashboard -f
+```
+
+默认端口为 `10086`，访问：`http://服务器地址:10086`。
+
+自定义安装目录：
+
+```bash
+sudo ./scripts/install.sh --install-dir /srv/WGDashboard
+```
+
+安装脚本不会覆盖 `src/wg-dashboard.ini`、`src/db/`、`src/download/`、`src/backup/`、`src/log/` 和 `src/ssl/`。
+
+### 方式二：Docker Compose
+
+需要 Docker Engine 和 Docker Compose v2：
+
+```bash
+git clone https://github.com/Adsryen/WGDashboard-Guard.git
+cd WGDashboard-Guard
+cp docker/.env.example .env
+docker compose --env-file .env -f docker/compose.yaml up -d --build
+```
+
+默认访问：`http://服务器地址:10086`。
+
+```bash
+docker compose --env-file .env -f docker/compose.yaml ps
+docker compose --env-file .env -f docker/compose.yaml logs -f wgdashboard
+docker compose --env-file .env -f docker/compose.yaml down
+```
+
+Docker 配置说明见 [`docker/README.md`](docker/README.md)，环境变量模板见 [`docker/.env.example`](docker/.env.example)。
+
+## 配置与安全
+
+- Dashboard 默认使用 HTTP；生产环境建议放在 HTTPS 反向代理后，或限制管理端口只允许 VPN/LAN 网段访问。
+- `51820/udp` 是 WireGuard 端口，Dashboard 管理端口通常是 `10086/tcp`，两者不要混淆。
+- 启用 TOTP 后，可以在登录页面选择“信任此设备”；可信会话时长可在 Dashboard 设置中调整。
+- 不要把 `wg-dashboard.ini`、`.env`、TOTP 密钥、私钥或数据库提交到 Git。
+- 使用防火墙限制管理端口时，请先确认允许了当前管理来源，避免把自己锁在服务器外。
+
+网络审计说明见 [`docs/network-audit.md`](docs/network-audit.md)。网络策略说明见 [`docs/network-policy.md`](docs/network-policy.md)。
+
+## 更新与备份
+
+原生安装：
+
+```bash
+cd WGDashboard-Guard
+git pull
+sudo ./scripts/install.sh
+```
+
+Docker：
+
+```bash
+git pull
+docker compose --env-file .env -f docker/compose.yaml up -d --build
+```
+
+升级前建议备份原生安装目录中的配置、数据库和 WireGuard 配置，或 Docker 的 `data`、`conf`、`aconf` 卷。
+
+## 开发
+
+后端依赖位于 [`src/requirements.txt`](src/requirements.txt)，前端代码位于 `src/static/app/`。提交前至少执行：
+
+```bash
+python3 -m unittest discover -s tests
+docker compose --env-file .env -f docker/compose.yaml config
+```
+
+## 上游项目与许可证
+
+- 上游项目：[WGDashboard](https://github.com/donaldzou/WGDashboard)
+- 上游官网：[wgdashboard.dev](https://wgdashboard.dev)
+- 本项目许可证：[Apache License 2.0](LICENSE)
+- 安全问题请参阅：[SECURITY.md](SECURITY.md)
+
+再次感谢上游 WGDashboard 项目及其贡献者。本仓库的 Guard 功能、审计、策略和部署增强均由本项目维护。

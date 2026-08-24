@@ -1,4 +1,5 @@
 import dashboard
+from gunicorn_tls import get_tls_files
 import os
 from datetime import datetime
 global sqldb, cursor, DashboardConfig, WireguardConfigurations, AllPeerJobs, JobLogger, Dash
@@ -21,6 +22,11 @@ loglevel = os.environ['log_level'] if 'log_level' in os.environ else 'info'
 capture_output = True
 errorlog = f"./log/error_{date}.log"
 pythonpath = "., ./modules"
+
+tls_files = get_tls_files(os.path.dirname(os.path.abspath(__file__)))
+if tls_files:
+    certfile = tls_files["certfile"]
+    keyfile = tls_files["keyfile"]
 
 print(f"[Gunicorn] WGDashboard w/ Gunicorn will be running on {bind}", flush=True)
 print(f"[Gunicorn] Access log file is at {accesslog}", flush=True)

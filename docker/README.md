@@ -1,218 +1,78 @@
-# WGDashboard Docker Explanation:
-Author: @DaanSelen<br>
+# WGDashboard Docker 部署
 
-This document delves into how the WGDashboard Docker container has been built.<br>
-Of course there are two stages (simply said), one before run-time and one at/after run-time.<br>
-The `Dockerfile` describes how the container image is made, and the `entrypoint.sh` is executed after the container is started. <br>
-In this example, [WireGuard](https://www.wireguard.com/) is integrated into the container itself, so it should be a run-and-go(/out-of-the-box) experience.<br>
-For more details on the source-code specific to this Docker image, refer to the source files, they have lots of comments.
+## 快速开始
 
-<br>
-<img 
-  src="https://wgdashboard-resources.tor1.cdn.digitaloceanspaces.com/Logos/Logo-2-Rounded-512x512.png" 
-  alt="WG-Dashboard Logo" 
-  title="WG-Dashboard Logo"
-  style="display: block; margin: 0 auto;"
-  width="150"
-  height="150"
-/>
-<br>
-
-To get the container running you either pull the pre-made image from a remote repository, there are 2 official options.<br>
-
-- ghcr.io/wgdashboard/wgdashboard:<tag>
-- docker.io/donaldzou/wgdashboard:<tag>
-
-> tags should be either: latest, main, <version>, <branch-name> (if built) or <commit-sha>.
-
-From there either use the environment variables described below as parameters or use the Docker Compose file: `compose.yaml`.<br>
-Be careful, the default generated WireGuard configuration file uses port 51820/udp. So make sure to use this port if you want to use it out of the box.<br>
-Otherwise edit the configuration file in WGDashboard under `Configuration Settings` -> `Edit Raw Configuration File`.
-
-> Otherwise you need to enter the container and edit: `/etc/wireguard/wg0.conf`.
-
-# WGDashboard: 🐳 Docker Deployment Guide
-
-To run the container, you can either pull the image from the Github Container Registry (ghcr.io), Docker Hub (docker.io) or build it yourself. The image is available at:
-
-> `docker.io` is in most cases automatically resolved by the Docker application. Therefor you can ofter specify: `donaldzou/wgdashboard:latest`
-
-### 🔧 Quick Docker Run Command
-
-Here's an example to get it up and running quickly:
+在仓库根目录执行：
 
 ```bash
-docker run -d \
-  --name wgdashboard \
-  --restart unless-stopped \
-  -p 10086:10086/tcp \
-  -p 51820:51820/udp \
-  --cap-add NET_ADMIN \
-  ghcr.io/wgdashboard/wgdashboard:latest
+cp docker/.env.example .env
+docker compose --env-file .env -f docker/compose.yaml up -d --build
 ```
 
-> ⚠️ The default WireGuard port is `51820/udp`. If you change this, update the `/etc/wireguard/wg0.conf` accordingly.
+默认访问地址：`http://服务器地址:10086`。
 
----
+首次启动会创建 WireGuard 配置和持久化数据。不要删除 Compose 创建的 `aconf`、`conf`、`data` 卷。
 
-### 📦 Docker Compose Alternative (see the [compose file](./compose.yaml))
-
-You can also use Docker Compose for easier configuration:
-
-```yaml
-services:
-  wgdashboard:
-    image: ghcr.io/wgdashboard/wgdashboard:latest
-    restart: unless-stopped
-    container_name: wgdashboard
-    ports:
-      - 10086:10086/tcp
-      - 51820:51820/udp
-
-    volumes:
-      - aconf:/etc/amnezia/amneziawg
-      - conf:/etc/wireguard
-      - data:/data
-
-    cap_add:
-      - NET_ADMIN
-
-volumes:
-  aconf:
-  conf:
-  data:
-```
-
-> 📁 You can customize the **volume paths** on the host to fit your needs. The example above uses Docker volumes.
-
----
-
-## 🔄 Updating the Container
-
-Updating the WGDashboard container should be through 'The Docker Way' - by pulling the newest/newer image and replacing this old one.
-
----
-
-## ⚙️ Environment Variables
-
-| Variable           | Accepted Values                          | Default                 | Example               | Description                                                             |
-| ------------------ | ---------------------------------------- | ----------------------- | --------------------- | ----------------------------------------------------------------------- |
-| `dynamic_config`   | true, yes, false, no                     | `true`                  | `true` or `no`        | Turns on or off the dynamic configuration feature, on by default for Docker |
-| `tz`               | Timezone                                 | `Europe/Amsterdam`      | `America/New_York`    | Sets the container's timezone. Useful for accurate logs and scheduling. |
-| `global_dns`       | IPv4 and IPv6 addresses                  | `9.9.9.9`               | `8.8.8.8`, `1.1.1.1`  | Default DNS for WireGuard clients.                                      |
-| `public_ip`        | Public IP address                        | Retrieved automatically | `253.162.134.73`      | Used to generate accurate client configs. Needed if container is NAT’d. |
-| `wgd_port`         | Any port that is allowed for the process | `10086`                 | `443`                 | This port is used to set the WGDashboard web port.                      |
-| `username`         | Any non‐empty string                     | `-`                     | `admin`               | Username for the WGDashboard web interface account.                     |
-| `password`         | Any non‐empty string                     | `-`                     | `s3cr3tP@ss`          | Password for the WGDashboard web interface account (stored hashed).     |
-| `enable_totp`      | `true`, `false`                          | `true`                  | `false`               | Enable TOTP‐based two‐factor authentication for the account.            |
-| `wg_autostart`     | Wireguard interface name                 | `-    `                 | `wg0`                 | Automatically start the specified WireGuard interface when the container starts |
-| `email_server`     | SMTP server address                      | `-`                     | `smtp.gmail.com`      | SMTP server for sending email notifications.                            |
-| `email_port`       | SMTP port number                         | `-`                     | `587`                 | Port for connecting to the SMTP server.                                 |
-| `email_encryption` | `TLS`, `SSL`, etc.                       | `-`                     | `TLS`                 | Encryption method for email communication.                              |
-| `email_username`   | Any non-empty string                     | `-`                     | `user@example.com`    | Username for SMTP authentication.                                       |
-| `email_password`   | Any non-empty string                     | `-`                     | `app_password`        | Password for SMTP authentication.                                       |
-| `email_from`       | Valid email address                      | `-`                     | `noreply@example.com` | Email address used as the sender for notifications.                     |
-| `email_template`   | Path to template file                    | `-`                     | `your-template`       | Custom template for email notifications.                                |
-| `database_type`    | `sqlite`, `postgresql`, `mariadb+mariadbconnector`, etc.           | `-` | `postgresql` | Type of [sqlalchemy database engine](https://docs.sqlalchemy.org/en/21/core/engines.html). |
-| `database_host`    | Any non-empty string                     | `-`                     | `localhost`           | IP-Address or hostname of the SQL-database server.                       |
-| `database_port`    | Any non-empty string (or int for port)   | `-`                     | `5432`                | Port for the database communication.                                     |
-| `database_username`| Valid database username                  | `-`                     | `database_user`       | Database user username.                                                  |
-| `database_password`| Valid database password                  | `-`                     | `database_password`   | Database user password.                                                  |
-
----
-
-## 🔐 Port Forwarding Note
-
-When using multiple WireGuard interfaces, remember to **open their respective ports** on the host.
-
-Examples:
-```yaml
-# Individual mapping
-- 51821:51821/udp
-
-# Or port range
-- 51820-51830:51820-51830/udp
-```
-
-> 🚨 **Security Tip:** Only expose ports you actually use.
-
----
-
-## 🛠️ Building the Image Yourself
-
-To build from source:
+查看状态和日志：
 
 ```bash
-git clone https://github.com/WGDashboard/WGDashboard.git
-cd WGDashboard
-docker build . -f docker/Dockerfile -t yourname/wgdashboard:latest
+docker compose --env-file .env -f docker/compose.yaml ps
+docker compose --env-file .env -f docker/compose.yaml logs -f wgdashboard
 ```
 
-Example output:
-```shell
-docker images
+停止服务：
 
-REPOSITORY           TAG       IMAGE ID       CREATED             SIZE
-yourname/wgdashboard latest    c96fd96ee3b3   42 minutes ago      314MB
+```bash
+docker compose --env-file .env -f docker/compose.yaml down
 ```
 
----
+## 配置
 
-## 🧱 Dockerfile Overview
+复制 `docker/.env.example` 为 `.env` 后按需修改：
 
-Here's a brief overview of the Dockerfile stages used in the image build:
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `WGD_HTTP_PORT` | `10086` | 主机暴露的 Dashboard TCP 端口 |
+| `WGD_PORT` | `10086` | 容器内 Dashboard 端口 |
+| `WG_PORT` | `51820` | WireGuard UDP 端口 |
+| `WG_AUTOSTART` | `wg0` | 启动时自动启动的 WireGuard 配置 |
+| `TZ` | `UTC` | 容器时区 |
+| `PUBLIC_IP` | 空 | Peer 配置使用的公网地址；为空时自动检测 |
+| `WGD_USERNAME` | 空 | 可选的初始管理员用户名 |
+| `WGD_PASSWORD` | 空 | 可选的初始管理员密码 |
+| `WGD_ENABLE_TOTP` | 空 | 是否启用 TOTP |
+| `WGD_DYNAMIC_CONFIG` | `true` | 是否允许启动时写入环境变量配置 |
 
-### 1. **Build Tools & Go Compilation**
+需要发布多个 WireGuard 配置时，继续在 `ports` 中增加对应的 UDP 映射。
 
-```Dockerfile
-FROM golang:1.24 AS compiler
-WORKDIR /go
+## 使用预构建镜像
 
-RUN apt-get update && apt-get install -y ...
-RUN git clone ... && make
-...
+如果项目发布了兼容镜像，可以在 `.env` 中设置：
+
+```ini
+WGD_IMAGE=ghcr.io/你的组织/wgdashboard-guard:latest
 ```
 
-### 2. **Binary Copy to Scratch**
+然后执行：
 
-```Dockerfile
-FROM scratch AS bins
-COPY --from=compiler /go/amneziawg-go/amneziawg-go /amneziawg-go
-...
+```bash
+docker compose --env-file .env -f docker/compose.yaml pull
+docker compose --env-file .env -f docker/compose.yaml up -d --no-build
 ```
 
-### 3. **Final Alpine Container Setup**
+使用当前源码构建时保留默认值，并执行 `--build`。
 
-```Dockerfile
-FROM alpine:latest
-COPY --from=bins ...
-RUN apk update && apk add --no-cache ...
-COPY ./src ${WGDASH}/src
-COPY ./docker/entrypoint.sh /entrypoint.sh
-...
-EXPOSE 10086
-ENTRYPOINT ["/bin/bash", "/entrypoint.sh"]
+## 安全说明
+
+- `NET_ADMIN` 是 WireGuard 容器正常管理接口所需权限，请不要把容器暴露到不可信主机。
+- Dashboard 默认是 HTTP。生产环境建议放在 HTTPS 反向代理之后，或限制管理端口只允许 VPN/LAN 网段访问。
+- 不要把包含密码的 `.env` 提交到 Git。
+- 备份前先停止写入，再备份 `data`、`conf` 和 `aconf` 卷。
+
+## 从源码构建
+
+```bash
+docker build -f docker/Dockerfile -t wgdashboard-guard:local .
 ```
 
----
-
-## 🚀 Entrypoint Overview
-
-### Major Functions:
-
-- **`ensure_installation`**: Sets up the app, database, and Python environment.
-- **`set_envvars`**: Writes `wg-dashboard.ini` and applies environment variables.
-- **`start_core`**: Starts the main WGDashboard service.
-- **`ensure_blocking`**: Tails the error log to keep the container process alive.
-
----
-
-## ✅ Final Notes
-
-- Use `docker logs wgdashboard` for troubleshooting.
-- Access the web interface via `http://your-ip:10086` (or whichever port you specified in the compose).
-- The first time run will auto-generate WireGuard keys and configs (configs are generated from the template).
-
-## Closing remarks:
-
-For feedback please submit an issue to the repository. Or message dselen@nerthus.nl.
+镜像包含 WireGuard、AmneziaWG 工具和 Python 运行环境。构建阶段需要访问 GitHub 和 Python 包索引。

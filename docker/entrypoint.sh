@@ -54,7 +54,7 @@ set_ini() {
 stop_service() {
   echo "[WGDashboard] Stopping WGDashboard..."
 
-  local max_rounds="10"
+  local max_rounds="30"
   local round="0"
   local runtime_pid=""
 

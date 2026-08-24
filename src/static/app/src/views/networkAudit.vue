@@ -1,11 +1,19 @@
 <script setup>
 import {computed, onMounted, reactive, ref} from "vue";
+import {useRoute, useRouter} from "vue-router";
 import {fetchGet, fetchPost} from "@/utilities/fetch.js";
 import LocaleText from "@/components/text/localeText.vue";
 import {GetLocale} from "@/utilities/locale.js";
 
 const PAGE_SIZE = 25;
 const MAX_RANGE_DAYS = 31;
+const route = useRoute();
+const router = useRouter();
+const auditTabs = [
+	{key: "summary", label: "Summary", icon: "bi-bar-chart-fill"},
+	{key: "records", label: "Audit records", icon: "bi-table"},
+	{key: "alerts", label: "Alert settings", icon: "bi-envelope-exclamation-fill"},
+];
 
 const toLocalDateTimeValue = (date) => {
 	const offsetDate = new Date(date.getTime() - (date.getTimezoneOffset() * 60_000));
@@ -25,6 +33,8 @@ const filters = reactive({
 	protocol: "",
 	destination_port: "",
 	decision: "",
+	destination_in_tunnel: "all",
+	destination_in_policy: "all",
 });
 
 const records = ref([]);
@@ -66,6 +76,12 @@ const decisionDescriptions = {
 };
 const decisions = Object.keys(decisionLabels);
 
+const activeTab = computed(() => auditTabs.some((tab) => tab.key === route.query.tab) ? route.query.tab : "summary");
+const selectTab = (tab) => {
+	if (tab === activeTab.value) return;
+	router.replace({query: {...route.query, tab: tab === "summary" ? undefined : tab}});
+};
+
 const pick = (source, ...keys) => {
 	if (!source) return undefined;
 	for (const key of keys){
@@ -92,6 +108,8 @@ const queryPayload = (page = pagination.value.page) => {
 	for (const field of ["configuration_name", "peer_name", "peer_public_key", "tunnel_address", "destination", "protocol", "decision"]){
 		if (filters[field].trim()) payload[field] = filters[field].trim();
 	}
+	if (filters.destination_in_tunnel !== "all") payload.destination_in_tunnel = filters.destination_in_tunnel;
+	if (filters.destination_in_policy !== "all") payload.destination_in_policy = filters.destination_in_policy;
 	if (filters.destination_port !== "") payload.destination_port = Number(filters.destination_port);
 	return payload;
 };
@@ -257,6 +275,10 @@ const healthLabel = computed(() => GetLocale(healthStatus.value));
 const alertReady = computed(() => alertConfig.smtp_ready && Boolean(alertConfig.audit_alert_recipient) && alertConfig.verified);
 const decisionLabel = (decision) => GetLocale(decisionLabels[decision] || decision || "Unknown");
 const decisionClass = (decision) => ({policy_allowed: "text-bg-success", policy_denied: "text-bg-danger", forward_observed: "text-bg-secondary"}[decision] || "text-bg-secondary");
+const destinationInTunnelLabel = (value) => value === true ? GetLocale("Yes") : value === false ? GetLocale("No") : "-";
+const destinationInTunnelClass = (value) => value === true ? "text-bg-success" : value === false ? "text-bg-secondary" : "text-bg-light";
+const destinationInPolicyLabel = (value) => value === true ? GetLocale("Yes") : value === false ? GetLocale("No") : "-";
+const destinationInPolicyClass = (value) => value === true ? "text-bg-success" : value === false ? "text-bg-secondary" : "text-bg-light";
 const formatTime = (value) => {
 	if (!value || value === "-") return "-";
 	const date = new Date(value);
@@ -298,7 +320,17 @@ onMounted(refreshAll);
 			<span><LocaleText t="Audit decisions describe gateway observation or policy verdicts. They do not confirm that a remote application service succeeded." /></span>
 		</div>
 
-		<div class="row g-3 mb-3">
+		<div class="card shadow-sm mb-3 audit-tabs">
+			<div class="card-body p-2">
+				<div class="nav nav-pills nav-fill gap-2" role="tablist" aria-label="Network audit sections">
+					<button v-for="tab in auditTabs" :key="tab.key" class="nav-link d-flex align-items-center justify-content-center gap-2" :class="{active: activeTab === tab.key}" type="button" role="tab" :aria-selected="activeTab === tab.key" @click="selectTab(tab.key)">
+						<i :class="['bi', tab.icon]"></i><LocaleText :t="tab.label" />
+					</button>
+				</div>
+			</div>
+		</div>
+
+		<div class="row g-3 mb-3" v-show="activeTab === 'summary'">
 			<div class="col-12 col-xl-8">
 				<div class="card h-100 shadow-sm">
 					<div class="card-header d-flex align-items-center gap-2">
@@ -338,46 +370,48 @@ onMounted(refreshAll);
 			</div>
 		</div>
 
-		<div class="card shadow-sm mb-3">
+		<div class="card shadow-sm mb-3" v-show="activeTab === 'records'">
 			<div class="card-header d-flex align-items-center gap-2"><i class="bi bi-funnel-fill"></i><strong><LocaleText t="Audit filters" /></strong></div>
 			<form class="card-body" @submit.prevent="loadAudit(1)">
-				<div class="row g-2">
+					<div class="row g-2">
 					<div class="col-12 col-md-6 col-xl-3"><label class="form-label small" for="auditStart"><LocaleText t="Start time" /></label><input id="auditStart" v-model="filters.start_time" class="form-control" type="datetime-local" required></div>
 					<div class="col-12 col-md-6 col-xl-3"><label class="form-label small" for="auditEnd"><LocaleText t="End time" /></label><input id="auditEnd" v-model="filters.end_time" class="form-control" type="datetime-local" required></div>
 					<div class="col-12 col-md-6 col-xl-3"><label class="form-label small" for="auditConfiguration"><LocaleText t="Configuration" /></label><input id="auditConfiguration" v-model="filters.configuration_name" class="form-control" type="text"></div>
 					<div class="col-12 col-md-6 col-xl-3"><label class="form-label small" for="auditPeerName"><LocaleText t="Peer name" /></label><input id="auditPeerName" v-model="filters.peer_name" class="form-control" type="text"></div>
 					<div class="col-12 col-md-6 col-xl-3"><label class="form-label small" for="auditPeerKey"><LocaleText t="Peer public key" /></label><input id="auditPeerKey" v-model="filters.peer_public_key" class="form-control" type="text"></div>
 					<div class="col-12 col-md-6 col-xl-3"><label class="form-label small" for="auditTunnel"><LocaleText t="Tunnel address" /></label><input id="auditTunnel" v-model="filters.tunnel_address" class="form-control" type="text"></div>
-					<div class="col-12 col-md-6 col-xl-3"><label class="form-label small" for="auditDestination"><LocaleText t="Destination IP or CIDR" /></label><input id="auditDestination" v-model="filters.destination" class="form-control" type="text"></div>
-					<div class="col-6 col-md-3 col-xl-1"><label class="form-label small" for="auditProtocol"><LocaleText t="Protocol" /></label><select id="auditProtocol" v-model="filters.protocol" class="form-select"><option value=""><LocaleText t="All" /></option><option value="tcp">TCP</option><option value="udp">UDP</option><option value="icmp">ICMP</option></select></div>
+					<div class="col-12 col-md-6 col-xl-3"><label class="form-label small" for="auditDestination"><LocaleText t="Destination IP, CIDR, or partial text" /></label><input id="auditDestination" v-model="filters.destination" class="form-control" type="text"><small class="text-muted"><LocaleText t="Valid IP/CIDR uses range matching; other text searches the stored destination." /></small></div>
+					<div class="col-6 col-md-3 col-xl-1"><label class="form-label small" for="auditProtocol"><LocaleText t="Protocol text" /></label><input id="auditProtocol" v-model="filters.protocol" class="form-control" type="text" placeholder="tcp"></div>
 					<div class="col-6 col-md-3 col-xl-1"><label class="form-label small" for="auditPort"><LocaleText t="Port" /></label><input id="auditPort" v-model="filters.destination_port" class="form-control" type="number" min="1" max="65535"></div>
-					<div class="col-12 col-md-6 col-xl-2"><label class="form-label small" for="auditDecision"><LocaleText t="Decision" /></label><select id="auditDecision" v-model="filters.decision" class="form-select"><option value=""><LocaleText t="All" /></option><option value="forward_observed"><LocaleText t="Forwarding observed" /></option><option value="policy_allowed"><LocaleText t="Policy allowed" /></option><option value="policy_denied"><LocaleText t="Policy denied" /></option></select></div>
+						<div class="col-12 col-md-6 col-xl-2"><label class="form-label small" for="auditDecision"><LocaleText t="Decision text" /></label><input id="auditDecision" v-model="filters.decision" class="form-control" type="text" placeholder="denied"></div>
+						<div class="col-12 col-md-6 col-xl-2"><label class="form-label small" for="auditDestinationInTunnel"><LocaleText t="Destination in tunnel network" /></label><select id="auditDestinationInTunnel" v-model="filters.destination_in_tunnel" class="form-select"><option value="all"><LocaleText t="All" /></option><option value="true"><LocaleText t="Yes" /></option><option value="false"><LocaleText t="No" /></option></select></div>
+						<div class="col-12 col-md-6 col-xl-2"><label class="form-label small" for="auditDestinationInPolicy"><LocaleText t="Matches policy allowed target" /></label><select id="auditDestinationInPolicy" v-model="filters.destination_in_policy" class="form-select"><option value="all"><LocaleText t="All" /></option><option value="true"><LocaleText t="Yes" /></option><option value="false"><LocaleText t="No" /></option></select></div>
 				</div>
 				<div class="d-flex flex-wrap gap-2 align-items-center mt-3"><button class="btn btn-primary" :disabled="loadingAudit" type="submit"><span class="spinner-border spinner-border-sm me-2" v-if="loadingAudit"></span><i class="bi bi-search me-2" v-else></i><LocaleText t="Search audit records" /></button><small class="text-muted"><LocaleText t="Times are converted to UTC for the audit query. The maximum range is 31 days." /></small></div>
 				<p class="alert alert-danger small mb-0 mt-3" v-if="queryError"><strong><LocaleText t="Audit query failed:" /></strong> {{ queryError }}</p>
 			</form>
 		</div>
 
-		<div class="card shadow-sm mb-3">
+		<div class="card shadow-sm mb-3" v-show="activeTab === 'records'">
 			<div class="card-header d-flex flex-column flex-md-row align-items-md-center gap-2"><div><i class="bi bi-table me-2"></i><strong><LocaleText t="Activity windows" /></strong></div><small class="text-muted ms-md-auto"><LocaleText t="Results are fixed UTC five-minute windows." /> {{ pagination.total }} <LocaleText t="results" /></small></div>
 			<div class="table-responsive">
 				<table class="table table-hover align-middle mb-0">
-					<thead><tr><th><LocaleText t="Window" /></th><th><LocaleText t="Peer" /></th><th><LocaleText t="Destination" /></th><th><LocaleText t="Protocol" /></th><th><LocaleText t="Decision" /></th><th><LocaleText t="First seen" /></th><th><LocaleText t="Last seen" /></th><th><LocaleText t="Connections" /></th><th><LocaleText t="From Peer" /></th><th><LocaleText t="To Peer" /></th></tr></thead>
+						<thead><tr><th><LocaleText t="Window" /></th><th><LocaleText t="Peer" /></th><th><LocaleText t="Destination" /></th><th><LocaleText t="Destination in tunnel network" /></th><th><LocaleText t="Matches policy allowed target" /></th><th><LocaleText t="Protocol" /></th><th><LocaleText t="Decision" /></th><th><LocaleText t="First seen" /></th><th><LocaleText t="Last seen" /></th><th><LocaleText t="Connections" /></th><th><LocaleText t="From Peer" /></th><th><LocaleText t="To Peer" /></th></tr></thead>
 					<tbody>
 						<tr v-for="record in records" :key="[record.window_started_at, record.peer_public_key, record.destination_address, record.protocol, record.destination_port, record.decision].join(':')">
 							<td class="text-nowrap">{{ formatTime(record.window_started_at) }}</td>
 							<td><strong>{{ record.peer_name_snapshot || '-' }}</strong><small class="d-block text-muted text-break">{{ record.peer_public_key }}</small><small class="d-block text-muted">{{ record.configuration_name }} · {{ record.tunnel_address }}</small></td>
-							<td class="text-break">{{ record.destination_address }}</td><td>{{ String(record.protocol || '').toUpperCase() }}<span class="d-block text-muted small">{{ portLabel(record) }}</span></td><td><span class="badge" :class="decisionClass(record.decision)">{{ decisionLabel(record.decision) }}</span></td><td class="text-nowrap">{{ formatTime(record.first_seen_at) }}</td><td class="text-nowrap">{{ formatTime(record.last_seen_at) }}</td><td>{{ record.connection_count }}</td><td>{{ formatBytes(record.bytes_from_peer) }}</td><td>{{ formatBytes(record.bytes_to_peer) }}</td>
+								<td class="text-break">{{ record.destination_address }}</td><td><span class="badge" :class="destinationInTunnelClass(record.destination_in_tunnel)">{{ destinationInTunnelLabel(record.destination_in_tunnel) }}</span></td><td><span class="badge" :class="destinationInPolicyClass(record.destination_in_policy)">{{ destinationInPolicyLabel(record.destination_in_policy) }}</span></td><td>{{ String(record.protocol || '').toUpperCase() }}<span class="d-block text-muted small">{{ portLabel(record) }}</span></td><td><span class="badge" :class="decisionClass(record.decision)">{{ decisionLabel(record.decision) }}</span></td><td class="text-nowrap">{{ formatTime(record.first_seen_at) }}</td><td class="text-nowrap">{{ formatTime(record.last_seen_at) }}</td><td>{{ record.connection_count }}</td><td>{{ formatBytes(record.bytes_from_peer) }}</td><td>{{ formatBytes(record.bytes_to_peer) }}</td>
 						</tr>
-						<tr v-if="!loadingAudit && records.length === 0"><td colspan="10" class="text-center text-muted py-4"><LocaleText t="No audit activity matches the selected filters." /></td></tr>
-						<tr v-if="loadingAudit"><td colspan="10" class="text-center py-4"><span class="spinner-border spinner-border-sm me-2"></span><LocaleText t="Loading audit records..." /></td></tr>
+							<tr v-if="!loadingAudit && records.length === 0"><td colspan="12" class="text-center text-muted py-4"><LocaleText t="No audit activity matches the selected filters." /></td></tr>
+							<tr v-if="loadingAudit"><td colspan="12" class="text-center py-4"><span class="spinner-border spinner-border-sm me-2"></span><LocaleText t="Loading audit records..." /></td></tr>
 					</tbody>
 				</table>
 			</div>
 			<div class="card-footer d-flex align-items-center gap-2"><button class="btn btn-outline-secondary btn-sm" :disabled="!canGoPrevious" @click="loadAudit(pagination.page - 1)"><LocaleText t="Previous" /></button><span class="small text-muted"><LocaleText t="Page" /> {{ pagination.page }} <LocaleText t="of" /> {{ totalPages }}</span><button class="btn btn-outline-secondary btn-sm" :disabled="!canGoNext" @click="loadAudit(pagination.page + 1)"><LocaleText t="Next" /></button><small class="text-muted ms-auto" v-if="pagination.total_capped"><LocaleText t="Only the first 5,000 matching results are available." /></small></div>
 		</div>
 
-		<div class="row g-3 mb-3">
+		<div class="row g-3 mb-3" v-show="activeTab === 'alerts'">
 			<div class="col-12 col-xl-5">
 				<div class="card h-100 shadow-sm">
 					<div class="card-header d-flex align-items-center gap-2"><i class="bi bi-envelope-exclamation-fill"></i><strong><LocaleText t="Audit alert status" /></strong></div>
@@ -408,7 +442,7 @@ onMounted(refreshAll);
 			</div>
 		</div>
 
-		<div class="card shadow-sm"><div class="card-header"><i class="bi bi-signpost-split me-2"></i><strong><LocaleText t="Decision meanings" /></strong></div><div class="card-body"><div class="row g-3"><div v-for="decision in decisions" :key="decision" class="col-12 col-md-4"><span class="badge mb-2" :class="decisionClass(decision)">{{ decisionLabel(decision) }}</span><p class="small text-muted mb-0"><LocaleText :t="decisionDescriptions[decision]" /></p></div></div></div></div>
+		<div class="card shadow-sm" v-show="activeTab === 'summary'"><div class="card-header"><i class="bi bi-signpost-split me-2"></i><strong><LocaleText t="Decision meanings" /></strong></div><div class="card-body"><div class="row g-3"><div v-for="decision in decisions" :key="decision" class="col-12 col-md-4"><span class="badge mb-2" :class="decisionClass(decision)">{{ decisionLabel(decision) }}</span><p class="small text-muted mb-0"><LocaleText :t="decisionDescriptions[decision]" /></p></div></div></div></div>
 	</div>
 </template>
 

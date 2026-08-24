@@ -44,7 +44,7 @@ from network_policy.validation import PolicyValidationError
 from network_audit.service import NetworkAuditService, NetworkAuditServiceError
 from network_audit.alerts import AlertConfiguration, AlertConfigurationError
 from network_audit.sync import AuditConfigSynchronizer, NetworkAuditSyncError
-from network_audit.validation import AuditQuery, AuditValidationError
+from network_audit.validation import AuditPeerNetwork, AuditPolicyRule, AuditQuery, AuditValidationError
 from network_audit.health import read_health_snapshot
 
 class CustomJsonEncoder(DefaultJSONProvider):
@@ -984,7 +984,95 @@ def _network_audit_query_from_request() -> AuditQuery:
                     raise AuditValidationError(f"{field} must be an integer") from error
     else:
         payload = request.get_json(silent=True)
-    return AuditQuery.from_payload(payload)
+    return AuditQuery.from_payload(
+        payload,
+        peer_networks=_network_audit_peer_networks(),
+        policy_rules=_network_audit_policy_rules(),
+    )
+
+
+def _network_audit_peer_networks() -> tuple[AuditPeerNetwork, ...] | None:
+    peer_networks = []
+    for configuration in WireguardConfigurations.values():
+        for peer in getattr(configuration, "Peers", []):
+            networks = []
+            for raw_network in str(getattr(peer, "endpoint_allowed_ip", "") or "").split(","):
+                raw_network = raw_network.strip()
+                if not raw_network:
+                    continue
+                try:
+                    network = ipaddress.ip_network(raw_network, strict=False)
+                    if network.prefixlen == 0:
+                        continue
+                    networks.append(network)
+                except ValueError:
+                    app.logger.warning(
+                        "Ignoring invalid Peer AllowedIPs for audit tunnel matching: %s/%s",
+                        configuration.Name,
+                        peer.id,
+                    )
+            if not networks:
+                continue
+            for raw_tunnel_address in str(getattr(peer, "allowed_ip", "") or "").split(","):
+                try:
+                    tunnel_address = ipaddress.ip_network(raw_tunnel_address.strip(), strict=False)
+                except ValueError:
+                    continue
+                if tunnel_address.num_addresses != 1:
+                    continue
+                try:
+                    peer_networks.append(AuditPeerNetwork(
+                        configuration_name=configuration.Name,
+                        peer_public_key=peer.id,
+                        tunnel_address=str(tunnel_address.network_address),
+                        networks=tuple(networks),
+                    ))
+                except AuditValidationError:
+                    app.logger.warning(
+                        "Ignoring invalid Peer snapshot for audit tunnel matching: %s/%s",
+                        configuration.Name,
+                        peer.id,
+                    )
+    return tuple(peer_networks)
+
+
+def _network_audit_policy_rules() -> tuple[AuditPolicyRule, ...] | None:
+    if NetworkPolicyManager is None:
+        return None
+    rules = []
+    try:
+        records = NetworkPolicyManager.repository.current_records()
+        for record in records:
+            policy = record.get("policy")
+            if (
+                not record.get("managed")
+                or record.get("binding_status") != "bound"
+                or record.get("last_apply_status") != "applied"
+                or policy is None
+            ):
+                continue
+            for rule in policy.rules:
+                try:
+                    rules.append(AuditPolicyRule(
+                        configuration_name=policy.configuration_name,
+                        peer_public_key=policy.peer_public_key,
+                        tunnel_address=policy.tunnel_address,
+                        destination=rule.destination,
+                        protocol=rule.protocol,
+                        port_from=rule.port_from,
+                        port_to=rule.port_to,
+                    ))
+                except AuditValidationError:
+                    app.logger.warning(
+                        "Ignoring invalid network policy rule for audit classification: %s/%s/%s",
+                        policy.configuration_name,
+                        policy.peer_public_key,
+                        policy.tunnel_address,
+                    )
+    except Exception:
+        app.logger.exception("Network policy records are unavailable for audit classification")
+        return None
+    return tuple(rules)
 
 
 def _network_audit_service() -> NetworkAuditService:

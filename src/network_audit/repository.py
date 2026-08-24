@@ -17,6 +17,11 @@ SCHEMA_VERSION = 2
 WINDOW_DURATION = timedelta(minutes=5)
 
 
+def _contains_pattern(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 class NetworkAuditRepository:
     """Owns only the audit database schema and queries, never DashboardConfig.engine."""
 
@@ -230,29 +235,109 @@ class NetworkAuditRepository:
             self.activity_windows.c.WindowStartedAt >= query.start_time,
             self.activity_windows.c.WindowStartedAt <= query.end_time,
         ]
-        equality_filters = {
+        text_filters = {
             "configuration_name": self.activity_windows.c.ConfigurationName,
             "peer_public_key": self.activity_windows.c.PeerPublicKey,
             "peer_name": self.activity_windows.c.PeerNameSnapshot,
             "tunnel_address": self.activity_windows.c.TunnelAddress,
             "protocol": self.activity_windows.c.Protocol,
-            "destination_port": self.activity_windows.c.DestinationPort,
         }
-        for field, column in equality_filters.items():
+        for field, column in text_filters.items():
             value = getattr(query, field)
-            if value is not None:
-                conditions.append(column == value)
+            if value:
+                conditions.append(column.ilike(_contains_pattern(value), escape="\\"))
         if query.decision is not None:
-            conditions.append(self.activity_windows.c.Decision == query.decision.value)
+            if query.decision:
+                conditions.append(self.activity_windows.c.Decision.ilike(
+                    _contains_pattern(query.decision), escape="\\"
+                ))
+        if query.destination_port is not None:
+            conditions.append(self.activity_windows.c.DestinationPort == query.destination_port)
         if query.destination is not None:
-            start_key = address_sort_key(query.destination.network_address)
-            end_key = address_sort_key(query.destination.broadcast_address)
-            conditions.extend((
-                self.activity_windows.c.AddressFamily == query.destination.version,
-                self.activity_windows.c.DestinationSortKey >= start_key,
-                self.activity_windows.c.DestinationSortKey <= end_key,
+            if isinstance(query.destination, str):
+                conditions.append(self.activity_windows.c.DestinationAddress.ilike(
+                    _contains_pattern(query.destination), escape="\\"
+                ))
+            else:
+                start_key = address_sort_key(query.destination.network_address)
+                end_key = address_sort_key(query.destination.broadcast_address)
+                conditions.extend((
+                    self.activity_windows.c.AddressFamily == query.destination.version,
+                    self.activity_windows.c.DestinationSortKey >= start_key,
+                    self.activity_windows.c.DestinationSortKey <= end_key,
+                ))
+        destination_in_tunnel = self._destination_in_tunnel_condition(query)
+        if destination_in_tunnel is not None and query.destination_in_tunnel != "all":
+            if query.destination_in_tunnel == "true":
+                conditions.append(destination_in_tunnel)
+            else:
+                conditions.append(db.not_(destination_in_tunnel))
+        destination_flag = (
+            db.case((destination_in_tunnel, True), else_=False)
+            if destination_in_tunnel is not None else db.literal(None)
+        ).label("DestinationInTunnel")
+        destination_in_policy = self._destination_in_policy_condition(query)
+        if destination_in_policy is not None and query.destination_in_policy != "all":
+            if query.destination_in_policy == "true":
+                conditions.append(destination_in_policy)
+            else:
+                conditions.append(db.not_(destination_in_policy))
+        policy_flag = (
+            db.case((destination_in_policy, True), else_=False)
+            if destination_in_policy is not None else db.literal(None)
+        ).label("DestinationInPolicy")
+        return db.select(self.activity_windows, destination_flag, policy_flag).where(*conditions)
+
+    def _destination_in_tunnel_condition(self, query: AuditQuery) -> db.ColumnElement[bool] | None:
+        if query.peer_networks is not None:
+            conditions = []
+            for peer_network in query.peer_networks:
+                for network in peer_network.networks:
+                    conditions.append(db.and_(
+                        self.activity_windows.c.ConfigurationName == peer_network.configuration_name,
+                        self.activity_windows.c.PeerPublicKey == peer_network.peer_public_key,
+                        self.activity_windows.c.TunnelAddress == peer_network.tunnel_address,
+                        self.activity_windows.c.AddressFamily == network.version,
+                        self.activity_windows.c.DestinationSortKey >= address_sort_key(network.network_address),
+                        self.activity_windows.c.DestinationSortKey <= address_sort_key(network.broadcast_address),
+                    ))
+            return db.or_(*conditions) if conditions else db.false()
+        if not query.tunnel_networks:
+            return None
+        return db.or_(*(
+            db.and_(
+                self.activity_windows.c.AddressFamily == network.version,
+                self.activity_windows.c.DestinationSortKey >= address_sort_key(network.network_address),
+                self.activity_windows.c.DestinationSortKey <= address_sort_key(network.broadcast_address),
+            )
+            for network in query.tunnel_networks
+        ))
+
+    def _destination_in_policy_condition(self, query: AuditQuery) -> db.ColumnElement[bool] | None:
+        if query.policy_rules is None:
+            return None
+        if not query.policy_rules:
+            return db.false()
+        conditions = []
+        for rule in query.policy_rules:
+            port_condition = db.true()
+            if rule.port_from is not None:
+                port_condition = db.and_(
+                    self.activity_windows.c.DestinationPort.is_not(None),
+                    self.activity_windows.c.DestinationPort >= rule.port_from,
+                    self.activity_windows.c.DestinationPort <= rule.port_to,
+                )
+            conditions.append(db.and_(
+                self.activity_windows.c.ConfigurationName == rule.configuration_name,
+                self.activity_windows.c.PeerPublicKey == rule.peer_public_key,
+                self.activity_windows.c.TunnelAddress == rule.tunnel_address,
+                self.activity_windows.c.AddressFamily == rule.destination.version,
+                self.activity_windows.c.DestinationSortKey >= address_sort_key(rule.destination.network_address),
+                self.activity_windows.c.DestinationSortKey <= address_sort_key(rule.destination.broadcast_address),
+                self.activity_windows.c.Protocol == rule.protocol,
+                port_condition,
             ))
-        return db.select(self.activity_windows).where(*conditions)
+        return db.or_(*conditions)
 
     def query(self, query: AuditQuery) -> tuple[list[dict[str, Any]], int]:
         statement = self._filtered_statement(query)
@@ -461,6 +546,8 @@ class NetworkAuditRepository:
             "connection_count": row["ConnectionCount"],
             "bytes_from_peer": row["BytesFromPeer"],
             "bytes_to_peer": row["BytesToPeer"],
+            "destination_in_tunnel": row["DestinationInTunnel"],
+            "destination_in_policy": row["DestinationInPolicy"],
         }
 
 

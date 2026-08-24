@@ -1,5 +1,5 @@
 <script setup>
-import {computed, defineAsyncComponent, ref} from "vue";
+import {computed, defineAsyncComponent, onMounted, ref} from "vue";
 import {fetchGet, getUrl} from "@/utilities/fetch.js";
 import LocaleText from "@/components/text/localeText.vue";
 import {GetLocale} from "@/utilities/locale.js";
@@ -75,7 +75,7 @@ const loadOverview = async (clearRuntimeFeedback = true) => {
 	return loaded;
 };
 
-await loadOverview();
+onMounted(loadOverview);
 
 const configurations = computed(() => [...new Set(rows.value.map(row => row.configuration_name))].sort());
 const summary = computed(() => Object.fromEntries(statusOrder.map(status => [

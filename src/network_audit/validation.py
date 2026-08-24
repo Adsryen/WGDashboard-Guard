@@ -32,6 +32,83 @@ class AuditDecision(str, Enum):
     POLICY_DENIED = "policy_denied"
 
 
+@dataclass(frozen=True)
+class AuditPeerNetwork:
+    """A Peer binding and the destination CIDRs advertised to that Peer."""
+
+    configuration_name: str
+    peer_public_key: str
+    tunnel_address: str
+    networks: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]
+
+    def __post_init__(self) -> None:
+        configuration_name = _required_string(self.configuration_name, "configuration_name", maximum=63)
+        if not CONFIGURATION_PATTERN.fullmatch(configuration_name):
+            raise AuditValidationError("configuration_name contains unsupported characters")
+        peer_public_key = _required_string(self.peer_public_key, "peer_public_key", maximum=44)
+        if not PUBLIC_KEY_PATTERN.fullmatch(peer_public_key):
+            raise AuditValidationError("peer_public_key is not a WireGuard public key")
+        tunnel_address = _address(self.tunnel_address, "tunnel_address")
+        networks = tuple(self.networks)
+        if any(not isinstance(network, (ipaddress.IPv4Network, ipaddress.IPv6Network)) for network in networks):
+            raise AuditValidationError("networks must contain IPv4 or IPv6 networks")
+        object.__setattr__(self, "configuration_name", configuration_name)
+        object.__setattr__(self, "peer_public_key", peer_public_key)
+        object.__setattr__(self, "tunnel_address", str(tunnel_address))
+        object.__setattr__(self, "networks", networks)
+
+
+@dataclass(frozen=True)
+class AuditPolicyRule:
+    """A normalized active network-policy rule used for audit classification."""
+
+    configuration_name: str
+    peer_public_key: str
+    tunnel_address: str
+    destination: ipaddress.IPv4Network | ipaddress.IPv6Network | str
+    protocol: str
+    port_from: int | None = None
+    port_to: int | None = None
+
+    def __post_init__(self) -> None:
+        configuration_name = _required_string(self.configuration_name, "configuration_name", maximum=63)
+        if not CONFIGURATION_PATTERN.fullmatch(configuration_name):
+            raise AuditValidationError("configuration_name contains unsupported characters")
+
+        peer_public_key = _required_string(self.peer_public_key, "peer_public_key", maximum=44)
+        if not PUBLIC_KEY_PATTERN.fullmatch(peer_public_key):
+            raise AuditValidationError("peer_public_key is not a WireGuard public key")
+
+        tunnel_address = _address(self.tunnel_address, "tunnel_address")
+        destination = self.destination
+        if not isinstance(destination, (ipaddress.IPv4Network, ipaddress.IPv6Network)):
+            destination = _network(destination, "destination")
+
+        protocol = _required_string(self.protocol, "protocol", maximum=16).lower()
+        if protocol not in SUPPORTED_PROTOCOLS:
+            raise AuditValidationError("protocol must be tcp, udp, or icmp")
+
+        if (self.port_from is None) != (self.port_to is None):
+            raise AuditValidationError("port_from and port_to must be provided together")
+        if protocol == "icmp" and self.port_from is not None:
+            raise AuditValidationError("icmp policy rules cannot contain ports")
+        port_from = self.port_from
+        port_to = self.port_to
+        if port_from is not None:
+            port_from = _port(port_from, "port_from")
+            port_to = _port(port_to, "port_to")
+            if port_from > port_to:
+                raise AuditValidationError("port_from cannot be greater than port_to")
+
+        object.__setattr__(self, "configuration_name", configuration_name)
+        object.__setattr__(self, "peer_public_key", peer_public_key)
+        object.__setattr__(self, "tunnel_address", str(tunnel_address))
+        object.__setattr__(self, "destination", destination)
+        object.__setattr__(self, "protocol", protocol)
+        object.__setattr__(self, "port_from", port_from)
+        object.__setattr__(self, "port_to", port_to)
+
+
 def normalize_utc(value: Any, field: str) -> datetime:
     if isinstance(value, str):
         try:
@@ -81,6 +158,26 @@ def _network(value: Any, field: str) -> ipaddress.IPv4Network | ipaddress.IPv6Ne
     if network.network_address.is_unspecified or network.network_address.is_multicast:
         raise AuditValidationError(f"{field} cannot be unspecified or multicast")
     return network
+
+
+def _destination_filter(value: Any) -> ipaddress.IPv4Network | ipaddress.IPv6Network | str:
+    raw_value = _required_string(value, "destination", maximum=45)
+    try:
+        network = ipaddress.ip_network(raw_value, strict=False)
+    except ValueError as error:
+        if "/" in raw_value:
+            raise AuditValidationError("destination must be an IPv4 or IPv6 address/CIDR") from error
+        return raw_value
+    if network.network_address.is_unspecified or network.network_address.is_multicast:
+        raise AuditValidationError("destination cannot be unspecified or multicast")
+    return network
+
+
+def _query_fragment(value: Any, field: str, *, maximum: int = 255, pattern: re.Pattern[str] | None = None) -> str:
+    fragment = _required_string(value, field, allow_empty=True, maximum=maximum)
+    if pattern is not None and not pattern.fullmatch(fragment):
+        raise AuditValidationError(f"{field} contains unsupported characters")
+    return fragment
 
 
 def _port(value: Any, field: str) -> int:
@@ -209,12 +306,17 @@ class AuditQuery:
     peer_public_key: str | None = None
     peer_name: str | None = None
     tunnel_address: str | None = None
-    destination: ipaddress.IPv4Network | ipaddress.IPv6Network | None = None
+    destination: ipaddress.IPv4Network | ipaddress.IPv6Network | str | None = None
     protocol: str | None = None
     destination_port: int | None = None
-    decision: AuditDecision | None = None
+    decision: AuditDecision | str | None = None
     page: int = 1
     page_size: int = DEFAULT_PAGE_SIZE
+    destination_in_tunnel: str | bool | None = "all"
+    tunnel_networks: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] | None = None
+    peer_networks: tuple[AuditPeerNetwork, ...] | None = None
+    destination_in_policy: str | bool | None = "all"
+    policy_rules: tuple[AuditPolicyRule, ...] | None = None
 
     def __post_init__(self) -> None:
         start_time = normalize_utc(self.start_time, "start_time")
@@ -225,33 +327,94 @@ class AuditQuery:
             raise AuditValidationError(f"time range cannot exceed {MAX_QUERY_RANGE_DAYS} days")
 
         if self.configuration_name is not None:
-            configuration_name = _required_string(self.configuration_name, "configuration_name", maximum=63)
-            if not CONFIGURATION_PATTERN.fullmatch(configuration_name):
-                raise AuditValidationError("configuration_name contains unsupported characters")
+            configuration_name = _query_fragment(
+                self.configuration_name, "configuration_name", maximum=63,
+                pattern=re.compile(r"[A-Za-z0-9_.-]*"),
+            )
             object.__setattr__(self, "configuration_name", configuration_name)
         if self.peer_public_key is not None:
-            peer_public_key = _required_string(self.peer_public_key, "peer_public_key", maximum=44)
-            if not PUBLIC_KEY_PATTERN.fullmatch(peer_public_key):
-                raise AuditValidationError("peer_public_key is not a WireGuard public key")
+            peer_public_key = _query_fragment(
+                self.peer_public_key, "peer_public_key", maximum=44,
+                pattern=re.compile(r"[A-Za-z0-9+/]*={0,1}"),
+            )
             object.__setattr__(self, "peer_public_key", peer_public_key)
         if self.peer_name is not None:
-            object.__setattr__(self, "peer_name", _required_string(self.peer_name, "peer_name", allow_empty=True))
+            object.__setattr__(
+                self, "peer_name", _query_fragment(self.peer_name, "peer_name", maximum=255)
+            )
         if self.tunnel_address is not None:
-            object.__setattr__(self, "tunnel_address", str(_address(self.tunnel_address, "tunnel_address")))
+            tunnel_address = _query_fragment(
+                self.tunnel_address, "tunnel_address", maximum=45,
+                pattern=re.compile(r"[0-9A-Fa-f:.]*"),
+            )
+            object.__setattr__(self, "tunnel_address", tunnel_address)
         if self.destination is not None and not isinstance(self.destination, (ipaddress.IPv4Network, ipaddress.IPv6Network)):
-            object.__setattr__(self, "destination", _network(self.destination, "destination"))
+            object.__setattr__(self, "destination", _destination_filter(self.destination))
         if self.protocol is not None:
-            protocol = _required_string(self.protocol, "protocol", maximum=16).lower()
-            if protocol not in SUPPORTED_PROTOCOLS:
-                raise AuditValidationError("protocol must be tcp, udp, or icmp")
+            protocol = _query_fragment(self.protocol, "protocol", maximum=16).lower()
+            if protocol and not any(protocol in supported for supported in SUPPORTED_PROTOCOLS):
+                raise AuditValidationError("protocol must match tcp, udp, or icmp")
             object.__setattr__(self, "protocol", protocol)
         if self.destination_port is not None:
             object.__setattr__(self, "destination_port", _port(self.destination_port, "destination_port"))
         if self.decision is not None:
-            try:
-                object.__setattr__(self, "decision", AuditDecision(self.decision))
-            except ValueError as error:
-                raise AuditValidationError("decision must be forward_observed, policy_allowed, or policy_denied") from error
+            raw_decision = self.decision.value if isinstance(self.decision, AuditDecision) else self.decision
+            decision = _query_fragment(raw_decision, "decision", maximum=32).lower()
+            if decision and not any(decision in supported.value for supported in AuditDecision):
+                raise AuditValidationError(
+                    "decision must match forward_observed, policy_allowed, or policy_denied"
+                )
+            object.__setattr__(self, "decision", decision)
+
+        destination_in_tunnel = self.destination_in_tunnel
+        if destination_in_tunnel is None:
+            destination_in_tunnel = "all"
+        elif isinstance(destination_in_tunnel, bool):
+            destination_in_tunnel = "true" if destination_in_tunnel else "false"
+        else:
+            destination_in_tunnel = _query_fragment(
+                destination_in_tunnel, "destination_in_tunnel", maximum=5
+            ).lower()
+        if destination_in_tunnel not in {"all", "true", "false"}:
+            raise AuditValidationError("destination_in_tunnel must be all, true, or false")
+        object.__setattr__(self, "destination_in_tunnel", destination_in_tunnel)
+
+        destination_in_policy = self.destination_in_policy
+        if destination_in_policy is None:
+            destination_in_policy = "all"
+        elif isinstance(destination_in_policy, bool):
+            destination_in_policy = "true" if destination_in_policy else "false"
+        else:
+            destination_in_policy = _query_fragment(
+                destination_in_policy, "destination_in_policy", maximum=5
+            ).lower()
+        if destination_in_policy not in {"all", "true", "false"}:
+            raise AuditValidationError("destination_in_policy must be all, true, or false")
+        object.__setattr__(self, "destination_in_policy", destination_in_policy)
+
+        if self.tunnel_networks is not None:
+            tunnel_networks = []
+            for index, network in enumerate(self.tunnel_networks):
+                if not isinstance(network, (ipaddress.IPv4Network, ipaddress.IPv6Network)):
+                    network = _network(network, f"tunnel_networks[{index}]")
+                tunnel_networks.append(network)
+            object.__setattr__(self, "tunnel_networks", tuple(tunnel_networks) or None)
+
+        if self.peer_networks is not None:
+            peer_networks = []
+            for index, peer_network in enumerate(self.peer_networks):
+                if not isinstance(peer_network, AuditPeerNetwork):
+                    raise AuditValidationError(f"peer_networks[{index}] must be an AuditPeerNetwork")
+                peer_networks.append(peer_network)
+            object.__setattr__(self, "peer_networks", tuple(peer_networks))
+
+        if self.policy_rules is not None:
+            policy_rules = []
+            for index, rule in enumerate(self.policy_rules):
+                if not isinstance(rule, AuditPolicyRule):
+                    raise AuditValidationError(f"policy_rules[{index}] must be an AuditPolicyRule")
+                policy_rules.append(rule)
+            object.__setattr__(self, "policy_rules", tuple(policy_rules))
 
         page = _positive_integer(self.page, "page")
         page_size = _positive_integer(self.page_size, "page_size")
@@ -268,12 +431,21 @@ class AuditQuery:
         object.__setattr__(self, "page_size", page_size)
 
     @classmethod
-    def from_payload(cls, payload: Any) -> "AuditQuery":
+    def from_payload(
+        cls,
+        payload: Any,
+        *,
+        tunnel_networks: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] | None = None,
+        policy_rules: tuple[AuditPolicyRule, ...] | None = None,
+        peer_networks: tuple[AuditPeerNetwork, ...] | None = None,
+    ) -> "AuditQuery":
         if not isinstance(payload, Mapping):
             raise AuditValidationError("audit query must be an object")
         expected_fields = {
             "start_time", "end_time", "configuration_name", "peer_public_key", "peer_name",
-            "tunnel_address", "destination", "protocol", "destination_port", "decision", "page", "page_size",
+            "tunnel_address", "destination", "protocol", "destination_port", "decision",
+            "destination_in_tunnel", "page", "page_size",
+            "destination_in_policy",
         }
         unknown_fields = set(payload) - expected_fields
         if unknown_fields:
@@ -289,6 +461,11 @@ class AuditQuery:
             protocol=payload.get("protocol"),
             destination_port=payload.get("destination_port"),
             decision=payload.get("decision"),
+            destination_in_tunnel=payload.get("destination_in_tunnel", "all"),
+            destination_in_policy=payload.get("destination_in_policy", "all"),
+            tunnel_networks=tunnel_networks,
+            peer_networks=peer_networks,
+            policy_rules=policy_rules,
             page=payload.get("page", 1),
             page_size=payload.get("page_size", DEFAULT_PAGE_SIZE),
         )

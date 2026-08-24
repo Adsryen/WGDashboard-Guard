@@ -4,6 +4,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+import ipaddress
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
@@ -15,7 +16,7 @@ try:
     import sqlalchemy as db
     from network_audit.repository import WINDOW_DURATION
     from network_audit.service import NetworkAuditService, NetworkAuditServiceError
-    from network_audit.validation import AuditObservation, AuditValidationError
+    from network_audit.validation import AuditObservation, AuditPeerNetwork, AuditPolicyRule, AuditQuery, AuditValidationError
 except ModuleNotFoundError:
     db = None
     NetworkAuditService = None
@@ -129,6 +130,178 @@ class NetworkAuditServiceTest(unittest.TestCase):
             record["destination_address"] for record in all_records
         ])
 
+    def test_text_filters_are_case_insensitive_substrings_for_query_and_summary(self):
+        self.service.record_observation(observation(
+            configuration_name="OfficeVPN",
+            peer_public_key="B" * 43 + "=",
+            peer_name_snapshot="Alice-Laptop",
+            tunnel_address="10.8.0.3",
+            destination_address="192.168.10.25",
+            protocol="udp",
+            destination_port=8443,
+            decision="policy_denied",
+        ))
+
+        filters = (
+            ("configuration_name", "OFFICE"),
+            ("peer_public_key", "BBBB"),
+            ("peer_name", "LAPTOP"),
+            ("tunnel_address", "10.8.0.3"),
+            ("protocol", "UDP"),
+            ("decision", "DENIED"),
+            ("destination", "192.168.10"),
+        )
+        for field, value in filters:
+            with self.subTest(field=field):
+                payload = query_payload(**{field: value}, page_size=10)
+                result = self.service.query(payload)
+                self.assertEqual(1, result["pagination"]["total"])
+                self.assertEqual("192.168.10.25", result["records"][0]["destination_address"])
+                summary = self.service.summary(payload)
+                self.assertEqual(1, summary["window_count"])
+
+    def test_destination_partial_search_keeps_full_cidr_validation_strict(self):
+        self.service.record_observation(observation(destination_address="192.168.10.25"))
+        self.service.record_observation(observation(destination_address="192.168.20.25"))
+
+        partial = self.service.query(query_payload(destination="192.168.10", page_size=10))
+        self.assertEqual(1, partial["pagination"]["total"])
+        self.assertEqual("192.168.10.25", partial["records"][0]["destination_address"])
+
+        with self.assertRaises(AuditValidationError):
+            self.service.query(query_payload(destination="192.168.10.0/not-a-cidr"))
+
+    def test_destination_in_tunnel_filter_and_response_flag_use_configured_networks(self):
+        self.service.record_observation(observation(destination_address="192.168.1.10"))
+        self.service.record_observation(observation(destination_address="192.168.2.10"))
+        tunnel_networks = (ipaddress.ip_network("192.168.1.0/24"),)
+
+        all_query = AuditQuery(**query_payload(), tunnel_networks=tunnel_networks)
+        all_result = self.service.query(all_query)
+        flags = {record["destination_address"]: record["destination_in_tunnel"] for record in all_result["records"]}
+        self.assertEqual({"192.168.1.10": True, "192.168.2.10": False}, flags)
+
+        for value, expected_address in (("true", "192.168.1.10"), (False, "192.168.2.10")):
+            with self.subTest(value=value):
+                filtered_query = AuditQuery(
+                    **query_payload(destination_in_tunnel=value), tunnel_networks=tunnel_networks,
+                )
+                result = self.service.query(filtered_query)
+                self.assertEqual(1, result["pagination"]["total"])
+                self.assertEqual(expected_address, result["records"][0]["destination_address"])
+                summary = self.service.summary(filtered_query)
+                self.assertEqual(1, summary["window_count"])
+
+        unknown_networks = self.service.query(AuditQuery(**query_payload()))
+        self.assertIsNone(unknown_networks["records"][0]["destination_in_tunnel"])
+
+    def test_destination_in_tunnel_matches_peer_endpoint_allowed_networks(self):
+        self.service.record_observation(observation(
+            tunnel_address="10.253.157.49",
+            destination_address="192.168.0.175",
+        ))
+        self.service.record_observation(observation(
+            tunnel_address="10.253.157.49",
+            destination_address="192.168.50.175",
+            observed_at=BASE_TIME + timedelta(minutes=5),
+        ))
+        peer_networks = (
+            AuditPeerNetwork(
+                configuration_name="wg0",
+                peer_public_key=PUBLIC_KEY,
+                tunnel_address="10.253.157.49",
+                networks=(ipaddress.ip_network("192.168.0.0/24"),),
+            ),
+        )
+        query = AuditQuery(
+            **query_payload(),
+            peer_networks=peer_networks,
+        )
+        flags = {
+            record["destination_address"]: record["destination_in_tunnel"]
+            for record in self.service.query(query)["records"]
+        }
+        self.assertEqual({"192.168.0.175": True, "192.168.50.175": False}, flags)
+
+    def test_default_route_is_not_classified_as_a_tunnel_network(self):
+        self.service.record_observation(observation(
+            tunnel_address="10.253.157.2",
+            destination_address="106.55.88.125",
+        ))
+        query = AuditQuery(
+            **query_payload(),
+            peer_networks=(),
+        )
+        result = self.service.query(query)
+        self.assertEqual(1, result["pagination"]["total"])
+        self.assertFalse(result["records"][0]["destination_in_tunnel"])
+        filtered = self.service.query(AuditQuery(
+            **query_payload(destination_in_tunnel="false"),
+            peer_networks=(),
+        ))
+        self.assertEqual(1, filtered["pagination"]["total"])
+
+    def test_policy_target_match_uses_peer_policy_not_tunnel_network(self):
+        self.service.record_observation(observation(
+            tunnel_address="10.253.157.49",
+            destination_address="192.168.0.175",
+            destination_port=5435,
+            decision="policy_allowed",
+        ))
+        self.service.record_observation(observation(
+            tunnel_address="10.253.157.49",
+            destination_address="192.168.0.175",
+            destination_port=5436,
+            observed_at=BASE_TIME + timedelta(minutes=5),
+        ))
+
+        policy_rules = (
+            AuditPolicyRule(
+                configuration_name="wg0",
+                peer_public_key=PUBLIC_KEY,
+                tunnel_address="10.253.157.49",
+                destination="192.168.0.175/32",
+                protocol="tcp",
+                port_from=5435,
+                port_to=5435,
+            ),
+        )
+        query = AuditQuery(
+            **query_payload(destination_in_policy="all"),
+            policy_rules=policy_rules,
+        )
+        result = self.service.query(query)
+        matches = {
+            record["destination_port"]: record["destination_in_policy"]
+            for record in result["records"]
+        }
+        self.assertEqual({5435: True, 5436: False}, matches)
+        self.assertEqual(1, self.service.query(AuditQuery(
+            **query_payload(destination_in_policy="true"), policy_rules=policy_rules,
+        ))["pagination"]["total"])
+        self.assertEqual(1, self.service.summary(AuditQuery(
+            **query_payload(destination_in_policy="true"), policy_rules=policy_rules,
+        ))["window_count"])
+
+    def test_text_filters_escape_sql_wildcards(self):
+        self.service.record_observation(observation(peer_name_snapshot="alpha_beta"))
+        self.service.record_observation(observation(
+            peer_name_snapshot="alphaXbeta", destination_address="192.168.1.11",
+        ))
+        self.service.record_observation(observation(
+            peer_name_snapshot="100%device", destination_address="192.168.1.12",
+        ))
+        self.service.record_observation(observation(
+            peer_name_snapshot="100Xdevice", destination_address="192.168.1.13",
+        ))
+
+        for value, expected in (("alpha_beta", "alpha_beta"), ("100%", "100%device")):
+            with self.subTest(value=value):
+                result = self.service.query(query_payload(peer_name=value, page_size=10))
+
+                self.assertEqual(1, result["pagination"]["total"])
+                self.assertEqual(expected, result["records"][0]["peer_name_snapshot"])
+
     def test_validation_rejects_invalid_observations_and_unbounded_queries(self):
         with self.assertRaises(AuditValidationError):
             observation(destination_address="0.0.0.0")
@@ -222,6 +395,9 @@ class NetworkAuditApiTest(unittest.TestCase):
         cls.temporary_directory.cleanup()
 
     def setUp(self):
+        with self.service.engine.begin() as connection:
+            connection.execute(self.service.repository.activity_windows.delete())
+            connection.execute(self.service.repository.daily_aggregates.delete())
         self.service.record_observation(observation())
         self.client = self.dashboard.app.test_client()
 
@@ -303,6 +479,83 @@ class NetworkAuditApiTest(unittest.TestCase):
         with mock.patch.object(self.service.repository, "query", side_effect=db.exc.OperationalError("query", {}, Exception())):
             unavailable = self._admin_client().post("/api/networkAudit/query", json=query_payload())
         self.assertEqual(503, unavailable.status_code)
+
+    def test_api_uses_peer_endpoint_allowed_networks_for_tunnel_filter_and_flag(self):
+        self.service.record_observation(observation(
+            tunnel_address="10.253.157.49", destination_address="192.168.0.175",
+        ))
+        self.service.record_observation(observation(
+            tunnel_address="10.253.157.49", destination_address="192.168.50.175",
+        ))
+        original_configurations = self.dashboard.WireguardConfigurations
+        self.addCleanup(setattr, self.dashboard, "WireguardConfigurations", original_configurations)
+        self.dashboard.WireguardConfigurations = {
+            "wg0": type("Configuration", (), {
+                "Name": "wg0",
+                "Peers": [type("Peer", (), {
+                    "id": PUBLIC_KEY,
+                    "allowed_ip": "10.253.157.49/32",
+                    "endpoint_allowed_ip": "192.168.0.0/24,192.168.10.0/24,192.168.30.0/24,10.253.157.0/24",
+                })()],
+            })(),
+        }
+
+        response = self._admin_client().post(
+            "/api/networkAudit/query",
+            json=query_payload(destination_in_tunnel="true"),
+        )
+        self.assertEqual(200, response.status_code)
+        data = response.get_json()["data"]
+        self.assertEqual(1, data["pagination"]["total"])
+        self.assertEqual("192.168.0.175", data["records"][0]["destination_address"])
+        self.assertTrue(data["records"][0]["destination_in_tunnel"])
+
+        summary = self._admin_client().get(
+            "/api/networkAudit/summary", query_string=query_payload(destination_in_tunnel="true"),
+        )
+        self.assertEqual(200, summary.status_code)
+        self.assertEqual(1, summary.get_json()["data"]["window_count"])
+
+    def test_api_classifies_a_flow_against_the_bound_network_policy(self):
+        self.service.record_observation(observation(
+            tunnel_address="10.253.157.49",
+            destination_address="192.168.0.175",
+            destination_port=5435,
+            decision="policy_allowed",
+        ))
+        policy = type("Policy", (), {
+            "configuration_name": "wg0",
+            "peer_public_key": PUBLIC_KEY,
+            "tunnel_address": "10.253.157.49",
+            "rules": (type("Rule", (), {
+                "destination": "192.168.0.175/32",
+                "protocol": "tcp",
+                "port_from": 5435,
+                "port_to": 5435,
+            })(),),
+        })()
+        original_records = self.dashboard.NetworkPolicyManager.repository.current_records
+        self.addCleanup(
+            setattr,
+            self.dashboard.NetworkPolicyManager.repository,
+            "current_records",
+            original_records,
+        )
+        self.dashboard.NetworkPolicyManager.repository.current_records = lambda: [{
+            "policy": policy,
+            "managed": True,
+            "binding_status": "bound",
+            "last_apply_status": "applied",
+        }]
+
+        response = self._admin_client().post(
+            "/api/networkAudit/query",
+            json=query_payload(destination_in_policy="true"),
+        )
+        self.assertEqual(200, response.status_code)
+        data = response.get_json()["data"]
+        self.assertEqual(1, data["pagination"]["total"])
+        self.assertTrue(data["records"][0]["destination_in_policy"])
 
 
 if __name__ == "__main__":

@@ -13,7 +13,10 @@ try:
     from network_audit.alerts import (
         AlertConfiguration,
         AlertConfigurationError,
+        AlertEvent,
         NetworkAuditAlertRunner,
+        _alert_body,
+        _alert_subject,
         evaluate_health_snapshot,
         load_alert_configuration,
     )
@@ -140,6 +143,26 @@ class NetworkAuditAlertCoreTest(unittest.TestCase):
         os.utime(self.health_path, (timestamp, timestamp))
         current = evaluate_health_snapshot(self.health_path, now=BASE_TIME)
         self.assertEqual("storage_write", current[-1].identity)
+
+    def test_alert_email_subject_and_body_are_in_chinese(self):
+        event = AlertEvent(
+            identity="collector_health",
+            alert_type="collector_health",
+            observed_value=1,
+            threshold=None,
+            tunnel_address="10.253.157.1",
+            detail="health snapshot is stale",
+        )
+
+        subject = _alert_subject(event)
+        body = _alert_body(event, BASE_TIME)
+
+        self.assertEqual("[WGDashboard] 网络审计告警：采集器健康状态", subject)
+        self.assertIn("WGDashboard 网络审计告警", body)
+        self.assertIn("告警类型：采集器健康状态", body)
+        self.assertIn("详细信息：健康快照已过期", body)
+        self.assertIn("隧道地址：10.253.157.1", body)
+        self.assertIn("策略判定表示网关观测结果", body)
 
     def test_runner_delivers_once_then_deduplicates_and_bounds_smtp_error(self):
         for _ in range(2):

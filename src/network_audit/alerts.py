@@ -27,6 +27,18 @@ MAX_ERROR_SUMMARY_LENGTH = 512
 MAX_POLL_INTERVAL_SECONDS = 3600
 _EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 _SECRET_PATTERN = re.compile(r"(?i)\b(password|passwd|secret|token|authorization)\s*[:=]\s*[^\s,;]+")
+_ALERT_TYPE_LABELS = {
+    "denied": "策略拒绝",
+    "scan": "异常扫描",
+    "collector_health": "采集器健康状态",
+    "storage_write": "审计存储写入失败",
+}
+_ALERT_DETAIL_LABELS = {
+    "health snapshot is missing": "健康快照文件不存在",
+    "health snapshot is stale": "健康快照已过期",
+    "collector configuration synchronization failed": "采集器配置同步失败",
+    "collector audit storage writes are failing": "采集器审计存储写入失败",
+}
 
 
 class AlertConfigurationError(ValueError):
@@ -393,28 +405,38 @@ def bounded_error(error: object, maximum: int = MAX_ERROR_SUMMARY_LENGTH) -> str
 
 
 def _alert_subject(event: AlertEvent) -> str:
-    return f"[WGDashboard] Network audit alert: {event.alert_type}"
+    return f"[WGDashboard] 网络审计告警：{_ALERT_TYPE_LABELS.get(event.alert_type, event.alert_type)}"
+
+
+def _alert_detail(detail: str) -> str:
+    if detail in _ALERT_DETAIL_LABELS:
+        return _ALERT_DETAIL_LABELS[detail]
+    status_match = re.fullmatch(r"collector status is (.+)", detail)
+    if status_match:
+        status_labels = {"degraded": "降级", "failed": "失败", "healthy": "健康"}
+        return f"采集器状态：{status_labels.get(status_match.group(1), status_match.group(1))}"
+    return detail
 
 
 def _alert_body(event: AlertEvent, now: datetime) -> str:
     lines = [
-        "WGDashboard network audit alert",
+        "WGDashboard 网络审计告警",
         "",
-        f"Detected at (UTC): {now.isoformat()}",
-        f"Alert type: {event.alert_type}",
-        f"Observed value: {event.observed_value}",
+        f"检测时间（UTC）：{now.isoformat()}",
+        f"告警类型：{_ALERT_TYPE_LABELS.get(event.alert_type, event.alert_type)}",
+        f"观测值：{event.observed_value}",
     ]
     if event.threshold is not None:
-        lines.append(f"Threshold: {event.threshold}")
+        lines.append(f"阈值：{event.threshold}")
     if event.peer_public_key:
-        lines.append(f"Peer public key: {event.peer_public_key}")
+        lines.append(f"Peer 公钥：{event.peer_public_key}")
     if event.peer_name_snapshot:
-        lines.append(f"Peer name snapshot: {event.peer_name_snapshot}")
+        lines.append(f"Peer 名称快照：{event.peer_name_snapshot}")
     if event.tunnel_address:
-        lines.append(f"Tunnel address: {event.tunnel_address}")
+        lines.append(f"隧道地址：{event.tunnel_address}")
     if event.detail:
-        lines.append(f"Detail: {event.detail}")
-    lines.extend(("", "Policy verdicts describe gateway observation or policy decisions, not remote application success."))
+        lines.append(f"详细信息：{_alert_detail(event.detail)}")
+    lines.extend(("", "策略判定表示网关观测结果或网络策略决定，不代表远端应用请求一定成功。"))
     return "\n".join(lines)
 
 

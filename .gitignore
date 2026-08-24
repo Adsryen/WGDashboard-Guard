@@ -12,6 +12,7 @@ src/static/pic.xd
 *.conf
 !deploy/systemd/tmpfiles.d/*.conf
 !deploy/systemd/wg-dashboard-audit.conf
+!deploy/systemd/wg-dashboard.service.d/dashboard-access.conf
 private_key.txt
 public_key.txt
 *venv*
@@ -61,3 +62,6 @@ coverage
 .trellis/
 .trellis-bak/
 src/static/dist/WGDashboardAdmin/
+
+# deploy
+.deploy/

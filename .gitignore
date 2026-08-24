@@ -12,7 +12,10 @@ src/static/pic.xd
 *.conf
 !deploy/systemd/tmpfiles.d/*.conf
 !deploy/systemd/wg-dashboard-audit.conf
-!deploy/systemd/wg-dashboard.service.d/dashboard-access.conf
+deploy/systemd/wg-dashboard-access.service
+deploy/systemd/wg-dashboard.service.d/dashboard-access.conf
+src/dashboard_access.py
+tests/test_dashboard_access.py
 private_key.txt
 public_key.txt
 *venv*

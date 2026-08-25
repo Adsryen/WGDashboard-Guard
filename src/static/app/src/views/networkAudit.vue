@@ -74,6 +74,7 @@ const decisionDescriptions = {
 	policy_allowed: "Gateway policy allowed the forwarded flow.",
 	policy_denied: "Gateway policy denied the forwarded flow.",
 };
+const protocols = ["tcp", "udp", "icmp"];
 const decisions = Object.keys(decisionLabels);
 
 const activeTab = computed(() => auditTabs.some((tab) => tab.key === route.query.tab) ? route.query.tab : "summary");
@@ -381,9 +382,9 @@ onMounted(refreshAll);
 					<div class="col-12 col-md-6 col-xl-3"><label class="form-label small" for="auditPeerKey"><LocaleText t="Peer public key" /></label><input id="auditPeerKey" v-model="filters.peer_public_key" class="form-control" type="text"></div>
 					<div class="col-12 col-md-6 col-xl-3"><label class="form-label small" for="auditTunnel"><LocaleText t="Tunnel address" /></label><input id="auditTunnel" v-model="filters.tunnel_address" class="form-control" type="text"></div>
 					<div class="col-12 col-md-6 col-xl-3"><label class="form-label small" for="auditDestination"><LocaleText t="Destination IP, CIDR, or partial text" /></label><input id="auditDestination" v-model="filters.destination" class="form-control" type="text"><small class="text-muted"><LocaleText t="Valid IP/CIDR uses range matching; other text searches the stored destination." /></small></div>
-					<div class="col-6 col-md-3 col-xl-1"><label class="form-label small" for="auditProtocol"><LocaleText t="Protocol text" /></label><input id="auditProtocol" v-model="filters.protocol" class="form-control" type="text" placeholder="tcp"></div>
+					<div class="col-6 col-md-3 col-xl-1"><label class="form-label small" for="auditProtocol"><LocaleText t="Protocol" /></label><select id="auditProtocol" v-model="filters.protocol" class="form-select"><option value="">&#x2014;</option><option v-for="protocol in protocols" :key="protocol" :value="protocol">{{ protocol.toUpperCase() }}</option></select></div>
 					<div class="col-6 col-md-3 col-xl-1"><label class="form-label small" for="auditPort"><LocaleText t="Port" /></label><input id="auditPort" v-model="filters.destination_port" class="form-control" type="number" min="1" max="65535"></div>
-						<div class="col-12 col-md-6 col-xl-2"><label class="form-label small" for="auditDecision"><LocaleText t="Decision text" /></label><input id="auditDecision" v-model="filters.decision" class="form-control" type="text" placeholder="denied"></div>
+						<div class="col-12 col-md-6 col-xl-2"><label class="form-label small" for="auditDecision"><LocaleText t="Decision" /></label><select id="auditDecision" v-model="filters.decision" class="form-select"><option value="">&#x2014;</option><option v-for="decision in decisions" :key="decision" :value="decision"><LocaleText :t="decisionLabels[decision]" /></option></select></div>
 						<div class="col-12 col-md-6 col-xl-2"><label class="form-label small" for="auditDestinationInTunnel"><LocaleText t="Destination in tunnel network" /></label><select id="auditDestinationInTunnel" v-model="filters.destination_in_tunnel" class="form-select"><option value="all"><LocaleText t="All" /></option><option value="true"><LocaleText t="Yes" /></option><option value="false"><LocaleText t="No" /></option></select></div>
 						<div class="col-12 col-md-6 col-xl-2"><label class="form-label small" for="auditDestinationInPolicy"><LocaleText t="Matches policy allowed target" /></label><select id="auditDestinationInPolicy" v-model="filters.destination_in_policy" class="form-select"><option value="all"><LocaleText t="All" /></option><option value="true"><LocaleText t="Yes" /></option><option value="false"><LocaleText t="No" /></option></select></div>
 				</div>

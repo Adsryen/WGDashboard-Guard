@@ -20,6 +20,8 @@ MAX_QUERY_RESULTS = 5_000
 PUBLIC_KEY_PATTERN = re.compile(r"^[A-Za-z0-9+/]{43}=$")
 CONFIGURATION_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,63}$")
 SUPPORTED_PROTOCOLS = {"tcp", "udp", "icmp"}
+QUERY_PROTOCOLS = ("tcp", "udp", "icmp")
+QUERY_DECISIONS = ("forward_observed", "policy_allowed", "policy_denied")
 
 
 class AuditValidationError(ValueError):
@@ -173,11 +175,9 @@ def _destination_filter(value: Any) -> ipaddress.IPv4Network | ipaddress.IPv6Net
     return network
 
 
-def _query_fragment(value: Any, field: str, *, maximum: int = 255, pattern: re.Pattern[str] | None = None) -> str:
+def _query_fragment(value: Any, field: str, *, maximum: int = 255) -> str:
     fragment = _required_string(value, field, allow_empty=True, maximum=maximum)
-    if pattern is not None and not pattern.fullmatch(fragment):
-        raise AuditValidationError(f"{field} contains unsupported characters")
-    return fragment
+    return fragment.strip()
 
 
 def _port(value: Any, field: str) -> int:
@@ -327,43 +327,41 @@ class AuditQuery:
             raise AuditValidationError(f"time range cannot exceed {MAX_QUERY_RANGE_DAYS} days")
 
         if self.configuration_name is not None:
-            configuration_name = _query_fragment(
-                self.configuration_name, "configuration_name", maximum=63,
-                pattern=re.compile(r"[A-Za-z0-9_.-]*"),
+            object.__setattr__(
+                self,
+                "configuration_name",
+                _query_fragment(self.configuration_name, "configuration_name", maximum=63),
             )
-            object.__setattr__(self, "configuration_name", configuration_name)
         if self.peer_public_key is not None:
-            peer_public_key = _query_fragment(
-                self.peer_public_key, "peer_public_key", maximum=44,
-                pattern=re.compile(r"[A-Za-z0-9+/]*={0,1}"),
+            object.__setattr__(
+                self,
+                "peer_public_key",
+                _query_fragment(self.peer_public_key, "peer_public_key", maximum=44),
             )
-            object.__setattr__(self, "peer_public_key", peer_public_key)
         if self.peer_name is not None:
             object.__setattr__(
                 self, "peer_name", _query_fragment(self.peer_name, "peer_name", maximum=255)
             )
         if self.tunnel_address is not None:
-            tunnel_address = _query_fragment(
-                self.tunnel_address, "tunnel_address", maximum=45,
-                pattern=re.compile(r"[0-9A-Fa-f:.]*"),
+            object.__setattr__(
+                self,
+                "tunnel_address",
+                _query_fragment(self.tunnel_address, "tunnel_address", maximum=45),
             )
-            object.__setattr__(self, "tunnel_address", tunnel_address)
         if self.destination is not None and not isinstance(self.destination, (ipaddress.IPv4Network, ipaddress.IPv6Network)):
             object.__setattr__(self, "destination", _destination_filter(self.destination))
         if self.protocol is not None:
             protocol = _query_fragment(self.protocol, "protocol", maximum=16).lower()
-            if protocol and not any(protocol in supported for supported in SUPPORTED_PROTOCOLS):
-                raise AuditValidationError("protocol must match tcp, udp, or icmp")
+            if protocol and protocol not in QUERY_PROTOCOLS:
+                raise AuditValidationError("protocol must be one of: " + ", ".join(QUERY_PROTOCOLS))
             object.__setattr__(self, "protocol", protocol)
         if self.destination_port is not None:
             object.__setattr__(self, "destination_port", _port(self.destination_port, "destination_port"))
         if self.decision is not None:
             raw_decision = self.decision.value if isinstance(self.decision, AuditDecision) else self.decision
             decision = _query_fragment(raw_decision, "decision", maximum=32).lower()
-            if decision and not any(decision in supported.value for supported in AuditDecision):
-                raise AuditValidationError(
-                    "decision must match forward_observed, policy_allowed, or policy_denied"
-                )
+            if decision and decision not in QUERY_DECISIONS:
+                raise AuditValidationError("decision must be one of: " + ", ".join(QUERY_DECISIONS))
             object.__setattr__(self, "decision", decision)
 
         destination_in_tunnel = self.destination_in_tunnel

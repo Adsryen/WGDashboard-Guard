@@ -147,8 +147,8 @@ class NetworkAuditServiceTest(unittest.TestCase):
             ("peer_public_key", "BBBB"),
             ("peer_name", "LAPTOP"),
             ("tunnel_address", "10.8.0.3"),
-            ("protocol", "UDP"),
-            ("decision", "DENIED"),
+            ("protocol", "udp"),
+            ("decision", "policy_denied"),
             ("destination", "192.168.10"),
         )
         for field, value in filters:
@@ -301,6 +301,64 @@ class NetworkAuditServiceTest(unittest.TestCase):
 
                 self.assertEqual(1, result["pagination"]["total"])
                 self.assertEqual(expected, result["records"][0]["peer_name_snapshot"])
+
+    def test_fuzzy_filters_accept_arbitrary_text_and_reject_wrong_enums(self):
+        self.service.record_observation(observation(
+            configuration_name="vpn-01",
+            peer_public_key=PUBLIC_KEY,
+            peer_name_snapshot="phone-full",
+            tunnel_address="10.253.157.2",
+            destination_address="192.168.0.134",
+            destination_port=8096,
+            decision="policy_allowed",
+        ))
+        self.service.record_observation(observation(
+            configuration_name="other",
+            destination_address="192.168.0.117",
+        ))
+
+        for field, value in (
+            ("configuration_name", "vpn"),
+            ("peer_name", "PHONE"),
+            ("tunnel_address", "157.2"),
+            ("destination", "192.168.0.134"),
+        ):
+            with self.subTest(field=field):
+                result = self.service.query(query_payload(**{field: value}, page_size=10))
+                self.assertEqual(1, result["pagination"]["total"])
+                self.assertEqual("192.168.0.134", result["records"][0]["destination_address"])
+                summary = self.service.summary(query_payload(**{field: value}))
+                self.assertEqual(1, summary["window_count"])
+
+        with self.subTest("peer_public_key fragment"):
+            key_fragment = PUBLIC_KEY[:-2]
+            result = self.service.query(query_payload(
+                peer_public_key=key_fragment, configuration_name="vpn", page_size=10,
+            ))
+            self.assertEqual(1, result["pagination"]["total"])
+            self.assertEqual("192.168.0.134", result["records"][0]["destination_address"])
+
+        with self.subTest("protocol case-insensitive enum"):
+            result = self.service.query(query_payload(protocol="TCP", page_size=10))
+            self.assertEqual(2, result["pagination"]["total"])
+
+        with self.assertRaises(AuditValidationError) as context:
+            self.service.query(query_payload(protocol="sctp"))
+        self.assertIn("tcp, udp, icmp", str(context.exception))
+        with self.assertRaises(AuditValidationError) as context:
+            self.service.query(query_payload(protocol="tcpudp"))
+        self.assertIn("tcp, udp, icmp", str(context.exception))
+        with self.assertRaises(AuditValidationError) as context:
+            self.service.query(query_payload(decision="denied"))
+        self.assertIn("forward_observed, policy_allowed, policy_denied", str(context.exception))
+        with self.assertRaises(AuditValidationError) as context:
+            self.service.query(query_payload(decision="policy"))
+        self.assertIn("forward_observed, policy_allowed, policy_denied", str(context.exception))
+        with self.assertRaises(AuditValidationError) as context:
+            self.service.query(query_payload(destination="foo/24"))
+        self.assertIn("CIDR", str(context.exception))
+
+        self.assertTrue(isinstance(self.service.query(query_payload(destination="192.168.1.0/24"))["records"], list))
 
     def test_validation_rejects_invalid_observations_and_unbounded_queries(self):
         with self.assertRaises(AuditValidationError):

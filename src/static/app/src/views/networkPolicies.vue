@@ -4,6 +4,7 @@ import {fetchGet, getUrl} from "@/utilities/fetch.js";
 import LocaleText from "@/components/text/localeText.vue";
 import {GetLocale} from "@/utilities/locale.js";
 import {createPolicyTarget} from "@/components/networkPolicy/policyTarget.js";
+import {groupRules, portLabel} from "@/components/networkPolicy/portGroups.js";
 import {DashboardConfigurationStore} from "@/stores/DashboardConfigurationStore.js";
 
 const NetworkPolicyModal = defineAsyncComponent(() => import("@/components/networkPolicy/networkPolicyModal.vue"));
@@ -105,7 +106,10 @@ const ruleSummary = (row) => {
 	if (!row.rules?.length){
 		return row.policy_status === "managed" ? GetLocale("No destination is allowed. Applying this policy denies all forwarded traffic for this Peer.") : "-";
 	}
-	return row.rules.map(rule => `${rule.destination} ${rule.protocol.toUpperCase()}${rule.ports ? `:${rule.ports.from === rule.ports.to ? rule.ports.from : `${rule.ports.from}-${rule.ports.to}`}` : ""}`).join("; ");
+	return groupRules(row.rules).map(group => {
+		const ports = group.protocol === "icmp" ? "" : group.allPorts ? "" : `:${group.ports.map(portLabel).join(",")}`;
+		return `${group.destination} ${group.protocol.toUpperCase()}${ports}`;
+	}).join("; ");
 };
 const formatDate = (value) => value ? new Date(value.replace(" ", "T") + "Z").toLocaleString() : "-";
 const canOpenPolicy = (row) => row.peer_present && row.eligible;

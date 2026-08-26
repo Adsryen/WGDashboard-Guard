@@ -672,5 +672,15 @@
 	"rollback": "回滚",
 	"stale": "过期",
 	"then": "那就",
-	"to add your server": "添加您的服务器"
+	"to add your server": "添加您的服务器",
+	"Save changes": "保存更改",
+	"Apply changes": "应用更改",
+	"Save changes to generate the exact nftables rules, then apply them after review.": "保存更改以生成确切的 nftables 规则，审核后再应用。",
+	"The rules have changed since the last review. Save again to regenerate the preview.": "规则在上次审核之后有改动，请再次保存以重新生成预览。",
+	"A group for this destination and protocol already exists. Add ports to that group instead.": "该目标地址与协议已存在分组，请改为在该分组的端口列表中添加端口。",
+	"All ports are allowed for this destination.": "该目标地址允许所有端口。",
+	"Network request failed. Please check your connection and try again.": "网络请求失败，请检查网络连接后重试。",
+	"You have unsaved changes. Switching the tunnel address will discard them. Continue?": "你有尚未保存的更改，切换隧道地址会丢弃这些更改。继续吗？",
+	"Roll back to this revision? The current policy will be replaced.": "回滚到此版本？当前策略将被替换。",
+	"Allow every port on this destination": "允许该目标地址的所有端口"
 }

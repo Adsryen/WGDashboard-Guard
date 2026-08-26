@@ -1,4 +1,5 @@
 import {DashboardConfigurationStore} from "@/stores/DashboardConfigurationStore.js";
+import {GetLocale} from "@/utilities/locale.js";
 import router from "@/router/router.js";
 const getHeaders = () => {
 	let headers = {
@@ -34,49 +35,86 @@ export const getUrl = (url) => {
 	return `./.${url}`;
 }
 
+const parseErrorBody = async (response) => {
+	try {
+		const body = await response.clone().json();
+		if (body && typeof body === "object"){
+			return body;
+		}
+	} catch (_){
+		// non-JSON error body (HTML page, gateway error, ...)
+	}
+	return null;
+}
+
+const handleFailedResponse = async (response, callback) => {
+	const store = DashboardConfigurationStore();
+	const body = await parseErrorBody(response);
+	if (response.status === 401){
+		store.newMessage("WGDashboard", "Sign in session ended, please sign in again", "warning")
+		await router.push({path: '/signin'})
+	}
+	const message = (body && body.message) || `Request failed (${response.status} ${response.statusText})`;
+	const errorResponse = {
+		status: false,
+		message,
+		data: body ? body.data : null
+	};
+	if (callback){
+		callback(errorResponse);
+	}
+	return errorResponse;
+}
+
+const handleNetworkFailure = (error, callback) => {
+	console.log("Error:", error);
+	const errorResponse = {
+		status: false,
+		message: GetLocale("Network request failed. Please check your connection and try again.")
+	};
+	if (callback){
+		callback(errorResponse);
+	}
+	return errorResponse;
+}
+
 export const fetchGet = async (url, params=undefined, callback=undefined) => {
 	const urlSearchParams = new URLSearchParams(params);
-	await fetch(`${getUrl(url)}?${urlSearchParams.toString()}`, {
-		headers: getHeaders()
-	})
-		.then((x) => {
-			const store = DashboardConfigurationStore();
-			if (!x.ok){
-				if (x.status !== 200){
-					if (x.status === 401){
-						store.newMessage("WGDashboard", "Sign in session ended, please sign in again", "warning")
-					}
-					throw new Error(x.statusText)
-				}
-			}else{
-				return x.json()
-			}
-		})
-		.then(x => callback ? callback(x) : undefined).catch(x => {
-			console.log("Error:", x)
-			router.push({path: '/signin'})
-	})
+	try {
+		const response = await fetch(`${getUrl(url)}?${urlSearchParams.toString()}`, {
+			headers: getHeaders()
+		});
+		if (!response.ok){
+			await handleFailedResponse(response, callback);
+			return undefined;
+		}
+		const body = await response.json();
+		if (callback){
+			callback(body);
+		}
+		return body;
+	} catch (error){
+		return handleNetworkFailure(error, callback);
+	}
 }
 
 export const fetchPost = async (url, body, callback) => {
-	await fetch(`${getUrl(url)}`, {
-		headers: getHeaders(),
-		method: "POST",
-		body: JSON.stringify(body)
-	}).then((x) => {
-		const store = DashboardConfigurationStore();
-		if (!x.ok){
-			if (x.status !== 200){
-				if (x.status === 401){
-					store.newMessage("WGDashboard", "Sign in session ended, please sign in again", "warning")
-				}
-				throw new Error(x.statusText)
-			}
-		}else{
-			return x.json()
+	try {
+		const response = await fetch(`${getUrl(url)}`, {
+			headers: getHeaders(),
+			method: "POST",
+			body: JSON.stringify(body)
+		});
+		if (!response.ok){
+			await handleFailedResponse(response, callback);
+			return undefined;
 		}
-	}).then(x => callback ? callback(x) : undefined).catch(x => {
-		console.log("Error:", x)
-		router.push({path: '/signin'})
-	})
+		const json = await response.json();
+		if (callback){
+			callback(json);
+		}
+		return json;
+	} catch (error){
+		return handleNetworkFailure(error, callback);
+	}
 }

@@ -37,6 +37,7 @@ export default {
 			hasPersistedPolicy: false,
 			persistedSignature: "",
 			disableConfirmation: false,
+			suppressTunnelAddressWatch: false,
 			loading: true,
 			applying: false,
 			error: ""
@@ -68,10 +69,18 @@ export default {
 			return this.policy.groups.filter((group) => group.protocol !== "icmp" && group.allPorts).length;
 		},
 		primaryActionLabel(){
-			return this.previewRequired ? "Review changes" : "Apply reviewed changes"
+			return this.previewRequired ? "Save changes" : "Apply changes"
 		},
 		primaryActionIcon(){
-			return this.previewRequired ? "bi bi-eye" : "bi bi-shield-check"
+			return this.previewRequired ? "bi bi-save" : "bi bi-shield-check"
+		},
+		previewStale(){
+			return this.previewRequired && Boolean(this.previewRuleset)
+		},
+		reviewHint(){
+			if (this.previewStale) return "The rules have changed since the last review. Save again to regenerate the preview."
+			if (this.previewRuleset) return "Apply only after reviewing the generated rules."
+			return "Save changes to generate the exact nftables rules."
 		},
 		policySignature(){
 			return JSON.stringify(this.policy)
@@ -110,17 +119,26 @@ export default {
 			handler(){
 				if (!this.loading){
 					this.previewRequired = true
-					this.previewRuleset = ""
-					this.previewHash = ""
 					this.disableConfirmation = false
 				}
 			}
 		},
-		tunnelAddress(){
-			this.previewRequired = true
-			if (!this.loading){
-				this.loadPolicy()
+		tunnelAddress(newAddress, oldAddress){
+			if (this.suppressTunnelAddressWatch){
+				this.suppressTunnelAddressWatch = false
+				return
 			}
+			if (this.loading || newAddress === oldAddress){
+				return
+			}
+			if (this.hasUnappliedChanges
+				&& !window.confirm(GetLocale("You have unsaved changes. Switching the tunnel address will discard them. Continue?"))){
+				this.suppressTunnelAddressWatch = true
+				this.tunnelAddress = oldAddress
+				return
+			}
+			this.previewRequired = true
+			this.loadPolicy()
 		}
 	},
 	async mounted(){
@@ -189,9 +207,8 @@ export default {
 		removePort(group, index){
 			group.ports.splice(index, 1);
 		},
-		setAllPorts(group, enabled){
-			group.allPorts = enabled;
-			if (enabled){
+		onAllPortsChange(group){
+			if (group.allPorts){
 				group.ports = [];
 			}else if (!group.ports.length){
 				group.ports = [emptyPort()];
@@ -312,6 +329,7 @@ export default {
 			});
 		},
 		async rollback(revisionId){
+			if (!window.confirm(GetLocale("Roll back to this revision? The current policy will be replaced."))) return;
 			this.applying = true;
 			await fetchPost("/api/networkPolicy/rollback", {revision_id: revisionId}, (res) => {
 				if (res.status){
@@ -427,42 +445,33 @@ export default {
 					<button type="button" class="btn btn-sm btn-outline-primary ms-auto" :disabled="!policy.managed || !canManage" :title="GetLocale('Add destination group')" @click="addGroup"><i class="bi bi-plus-lg"></i><span class="ms-1"><LocaleText t="Add destination group" /></span></button>
 				</div>
 				<fieldset :disabled="!policy.managed || !canManage" class="policy-rules-fieldset">
-				<div v-for="(group, groupIndex) in policy.groups" :key="`${group.destination}-${group.protocol}-${groupIndex}`" class="rule-row policy-port-group">
-					<div class="row g-2 align-items-start">
-						<div class="col-12 col-md-5">
-							<label class="form-label small"><LocaleText t="Destination IP or CIDR"></LocaleText></label>
-							<input class="form-control" :class="{'is-invalid': groupError(groupIndex)}" v-model.trim="group.destination" placeholder="192.168.10.117/32">
-						</div>
-						<div class="col-6 col-md-2">
-							<label class="form-label small"><LocaleText t="Protocol"></LocaleText></label>
-							<select class="form-select" v-model="group.protocol" @change="onProtocolChange(group)"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="icmp">ICMP</option></select>
-						</div>
-						<div class="col-6 col-md-5 rule-actions">
-							<span class="form-label small rule-actions-label" aria-hidden="true">&nbsp;</span>
-							<div class="d-flex justify-content-end gap-1">
-								<button v-if="group.protocol !== 'icmp'" type="button" class="btn btn-outline-secondary" :title="GetLocale(group.allPorts ? 'Use specific ports' : 'Allow all ports')" @click="setAllPorts(group, !group.allPorts)"><i :class="group.allPorts ? 'bi bi-list-ol' : 'bi bi-infinity'"></i></button>
-								<button type="button" class="btn btn-outline-danger" :title="GetLocale('Remove destination group')" @click="removeGroup(groupIndex)"><i class="bi bi-trash"></i></button>
-							</div>
-						</div>
+				<div v-for="(group, groupIndex) in policy.groups" :key="group.uid" class="policy-target-group">
+					<div class="policy-target-group-head">
+						<input class="form-control policy-dest-input" :class="{'is-invalid': groupError(groupIndex)}" v-model.trim="group.destination" placeholder="192.168.0.117/32" :aria-label="GetLocale('Destination IP or CIDR')">
+						<select class="form-select policy-proto-select" :aria-label="GetLocale('Protocol')" v-model="group.protocol" @change="onProtocolChange(group)"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="icmp">ICMP</option></select>
+						<label v-if="group.protocol !== 'icmp'" class="form-check m-0 policy-allports-check" :title="GetLocale('Allow every port on this destination')">
+							<input class="form-check-input" type="checkbox" v-model="group.allPorts" @change="onAllPortsChange(group)">
+							<span class="form-check-label"><LocaleText t="All ports" /></span>
+						</label>
+						<button type="button" class="btn btn-outline-danger policy-group-remove" :title="GetLocale('Remove destination group')" @click="removeGroup(groupIndex)"><i class="bi bi-trash"></i></button>
 					</div>
-					<div v-if="group.protocol === 'icmp'" class="policy-port-empty form-control text-muted"><LocaleText t="No ports for ICMP"></LocaleText></div>
-					<div v-else-if="group.allPorts" class="policy-port-empty form-control text-muted"><LocaleText t="All ports"></LocaleText></div>
-					<div v-else class="policy-port-list">
-						<div v-for="(port, portIndex) in group.ports" :key="portIndex" class="policy-port-row">
-							<div class="policy-port-inputs">
-								<input class="form-control" :class="{'is-invalid': portError(groupIndex, portIndex)}" type="number" min="1" max="65535" v-model.number="port.from" :placeholder="GetLocale('From')">
-								<input v-if="port.showRange" class="form-control" :class="{'is-invalid': portError(groupIndex, portIndex)}" type="number" min="1" max="65535" v-model.number="port.to" :placeholder="GetLocale('To')">
-								<button v-else type="button" class="btn btn-outline-secondary" :title="GetLocale('Use port range')" @click="port.showRange = true"><i class="bi bi-arrows-expand"></i></button>
+					<div v-if="groupError(groupIndex)" class="invalid-feedback d-block policy-group-error">{{ GetLocale(groupError(groupIndex)) }}</div>
+					<div v-if="group.protocol === 'icmp'" class="policy-target-group-body policy-target-group-body-muted"><i class="bi bi-activity me-1"></i><LocaleText t="No ports for ICMP" /></div>
+					<div v-else-if="group.allPorts" class="policy-target-group-body policy-target-group-body-muted"><i class="bi bi-infinity me-1"></i><LocaleText t="All ports are allowed for this destination." /></div>
+					<div v-else class="policy-target-group-body">
+						<div class="policy-target-ports-label"><LocaleText t="Ports" /></div>
+						<div class="policy-port-grid">
+							<div v-for="(port, portIndex) in group.ports" :key="portIndex" class="policy-port-chip">
+								<input class="form-control policy-port-from" :class="{'is-invalid': portError(groupIndex, portIndex)}" type="number" min="1" max="65535" v-model.number="port.from" :placeholder="GetLocale('From')">
+								<input v-if="port.showRange" class="form-control policy-port-to" :class="{'is-invalid': portError(groupIndex, portIndex)}" type="number" min="1" max="65535" v-model.number="port.to" :placeholder="GetLocale('To')">
+								<button v-else type="button" class="btn btn-outline-secondary policy-port-range-toggle" :title="GetLocale('Use port range')" @click="port.showRange = true"><i class="bi bi-arrows-expand"></i></button>
+								<button type="button" class="btn btn-outline-danger policy-port-remove" :title="GetLocale('Remove port')" @click="removePort(group, portIndex)"><i class="bi bi-trash"></i></button>
+								<div v-if="portError(groupIndex, portIndex)" class="invalid-feedback d-block policy-port-error">{{ GetLocale(portError(groupIndex, portIndex)) }}</div>
 							</div>
-							<button type="button" class="btn btn-outline-danger policy-port-remove" :title="GetLocale('Remove port')" @click="removePort(group, portIndex)"><i class="bi bi-trash"></i></button>
-							<div v-if="portError(groupIndex, portIndex)" class="invalid-feedback d-block policy-port-error">{{ GetLocale(portError(groupIndex, portIndex)) }}</div>
+							<button type="button" class="btn btn-sm btn-outline-primary policy-port-add" :title="GetLocale('Add port')" @click="addPort(group)"><i class="bi bi-plus-lg"></i><span class="ms-1"><LocaleText t="Add port" /></span></button>
+							<button type="button" class="btn btn-sm btn-outline-secondary policy-port-add-range" :title="GetLocale('Add port range')" @click="addPort(group, true)"><i class="bi bi-arrows-expand"></i><span class="ms-1"><LocaleText t="Add port range" /></span></button>
 						</div>
-						<div class="policy-port-actions">
-							<button type="button" class="btn btn-sm btn-outline-primary" :title="GetLocale('Add port')" @click="addPort(group)"><i class="bi bi-plus-lg"></i><span class="ms-1"><LocaleText t="Add port" /></span></button>
-							<button type="button" class="btn btn-sm btn-outline-secondary" :title="GetLocale('Add port range')" @click="addPort(group, true)"><i class="bi bi-arrows-expand"></i><span class="ms-1"><LocaleText t="Add port range" /></span></button>
-						</div>
-						<div v-if="groupError(groupIndex)" class="invalid-feedback d-block">{{ GetLocale(groupError(groupIndex)) }}</div>
-						<div v-else class="form-text"><LocaleText t="Leave the end port empty to allow one port." /></div>
+						<div class="form-text mt-2 mb-0"><LocaleText t="Leave the end port empty to allow one port." /></div>
 					</div>
 				</div>
 				</fieldset>
@@ -471,7 +480,7 @@ export default {
 				<div v-else class="small text-muted mt-2"><i class="bi bi-activity me-1"></i><LocaleText t="ICMP diagnostics are allowed for every configured destination." /></div>
 			</section>
 			<section class="policy-tab-actions policy-rules-actions">
-				<div class="small text-muted"><i class="bi bi-clipboard-check text-primary me-1"></i><LocaleText t="Review the rules, then confirm before applying them to the gateway." /></div>
+				<div class="small text-muted"><i class="bi bi-save text-primary me-1"></i><LocaleText t="Save changes to generate the exact nftables rules, then apply them after review." /></div>
 				<div class="d-flex flex-wrap gap-2 ms-auto">
 					<button type="button" class="btn btn-primary" :disabled="!canManage || !canReview" @click="runPrimaryAction"><i :class="[primaryActionIcon, 'me-1']"></i><LocaleText :t="primaryActionLabel"></LocaleText></button>
 					<button v-if="hasUnappliedChanges || previewRuleset" type="button" class="btn btn-outline-secondary" :disabled="applying" @click="resetChanges"><i class="bi bi-arrow-counterclockwise me-1"></i><LocaleText t="Discard changes"></LocaleText></button>
@@ -480,7 +489,8 @@ export default {
 			</div>
 
 			<div v-if="activeTab === 'review'" class="policy-tab-panel" role="tabpanel">
-			<div v-if="previewRuleset" class="preview-panel mb-3">
+			<div v-if="previewStale" class="policy-notice policy-notice-warning mb-3"><i class="bi bi-exclamation-triangle"></i><LocaleText t="The rules have changed since the last review. Save again to regenerate the preview." /></div>
+			<div v-if="previewRuleset" class="preview-panel mb-3" :class="{'preview-stale': previewStale}">
 				<div class="preview-heading">
 					<div><i class="bi bi-eye"></i><strong><LocaleText t="Generated nftables rules" /></strong></div>
 					<code>{{ previewHash }}</code>
@@ -495,20 +505,20 @@ export default {
 				</div>
 				<div class="policy-group-summary mb-2">
 					<strong><LocaleText t="Port group summary" /></strong>
-					<div v-for="(group, groupIndex) in policy.groups" :key="`review-${group.destination}-${group.protocol}-${groupIndex}`" class="policy-group-summary-row">
+					<div v-for="(group, groupIndex) in policy.groups" :key="group.uid" class="policy-group-summary-row">
 						<code>{{ group.destination }}</code><span class="badge text-bg-secondary">{{ group.protocol.toUpperCase() }}</span><span>{{ portGroupSummary(group) }}</span><span class="text-muted">{{ flattenedRuleCount(group) }} <LocaleText t="flattened rules" /></span>
 					</div>
 				</div>
 				<pre class="ruleset-preview mb-0">{{ previewRuleset }}</pre>
 			</div>
 
-			<div v-else class="empty-rules empty-rules-muted"><i class="bi bi-clipboard2 me-2"></i><LocaleText t="Review changes to generate the exact nftables rules." /></div>
+			<div v-else class="empty-rules empty-rules-muted"><i class="bi bi-clipboard2 me-2"></i><LocaleText t="Save changes to generate the exact nftables rules." /></div>
 
 			<section class="policy-tab-actions policy-review-actions">
-				<div class="small text-muted"><i :class="[previewRuleset ? 'bi bi-shield-check' : 'bi bi-clipboard-check', 'text-primary me-1']"></i><LocaleText :t="previewRuleset ? 'Apply only after reviewing the generated rules.' : 'Review changes to generate the exact nftables rules.'" /></div>
-				<div v-if="previewRuleset" class="d-flex flex-wrap gap-2 ms-auto">
-					<button type="button" class="btn btn-primary" :disabled="!canManage || previewRequired" @click="runPrimaryAction"><i class="bi bi-shield-check me-1"></i><LocaleText t="Apply reviewed changes"></LocaleText></button>
-					<button type="button" class="btn btn-outline-secondary" :disabled="applying" @click="resetChanges"><i class="bi bi-arrow-counterclockwise me-1"></i><LocaleText t="Discard changes"></LocaleText></button>
+				<div class="small text-muted"><i :class="[previewStale ? 'bi bi-exclamation-triangle' : (previewRuleset ? 'bi bi-shield-check' : 'bi bi-clipboard-check'), 'text-primary me-1']"></i><LocaleText :t="reviewHint" /></div>
+				<div class="d-flex flex-wrap gap-2 ms-auto">
+					<button type="button" class="btn btn-primary" :disabled="!canManage || previewStale || (!previewRuleset && !hasUnappliedChanges)" @click="runPrimaryAction"><i :class="[primaryActionIcon, 'me-1']"></i><LocaleText :t="primaryActionLabel"></LocaleText></button>
+					<button v-if="hasUnappliedChanges || previewRuleset" type="button" class="btn btn-outline-secondary" :disabled="applying" @click="resetChanges"><i class="bi bi-arrow-counterclockwise me-1"></i><LocaleText t="Discard changes" /></button>
 				</div>
 			</section>
 
@@ -585,20 +595,25 @@ export default {
 .policy-rules-section { padding-bottom: 0.4rem; }
 .policy-rules-fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .policy-section-disabled { opacity: 0.64; background: var(--bs-secondary-bg); }
-.rule-row { padding: 0.85rem 0; border-bottom: 1px solid var(--bs-border-color); }
-.rule-row:last-of-type { border-bottom: 0; }
-.rule-row .form-control, .rule-row .form-select, .rule-actions .btn { min-height: 2.375rem; }
-.rule-actions-label { display: block; visibility: hidden; }
-.rule-actions .btn { display: inline-grid; width: 2.375rem; place-items: center; padding: 0; }
-.policy-port-group { display: grid; gap: 0.75rem; }
-.policy-port-empty { min-height: 2.375rem; display: flex; align-items: center; }
-.policy-port-list { display: grid; gap: 0.45rem; }
-.policy-port-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.45rem; align-items: start; }
-.policy-port-inputs { display: flex; gap: 0.45rem; min-width: 0; }
-.policy-port-inputs .form-control { min-width: 0; }
-.policy-port-inputs .btn, .policy-port-remove { display: inline-grid; width: 2.375rem; min-height: 2.375rem; place-items: center; padding: 0; }
-.policy-port-error { grid-column: 1 / -1; }
-.policy-port-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+.policy-target-group { padding: 0.6rem 0.7rem; margin-bottom: 0.6rem; border: 1px solid var(--bs-border-color); border-radius: 7px; background: var(--bs-secondary-bg); }
+.policy-target-group-head { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 0.45rem; align-items: center; }
+.policy-target-group-head .form-control, .policy-target-group-head .form-select { min-height: 2.375rem; }
+.policy-dest-input { min-width: 0; }
+.policy-proto-select { width: 5.5rem; }
+.policy-allports-check { white-space: nowrap; }
+.policy-allports-check .form-check-label { font-size: 0.85rem; }
+.policy-group-remove { display: inline-grid; width: 2.375rem; place-items: center; padding: 0; }
+.policy-group-error { margin-top: 0.45rem; }
+.policy-target-group-body { margin-top: 0.55rem; padding: 0.55rem 0.6rem 0.6rem; border-top: 1px dashed var(--bs-border-color); border-radius: 0 0 6px 6px; background: var(--bs-tertiary-bg); }
+.policy-target-group-body-muted { color: var(--bs-secondary-color); font-size: 0.85rem; }
+.policy-target-ports-label { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--bs-secondary-color); margin-bottom: 0.4rem; }
+.policy-port-grid { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
+.policy-port-chip { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+.policy-port-from, .policy-port-to { width: 5.2rem; min-height: 2.375rem; }
+.policy-port-range-toggle, .policy-port-remove { display: inline-grid; width: 2.375rem; min-height: 2.375rem; place-items: center; padding: 0; }
+.policy-port-error { flex-basis: 100%; }
+.policy-port-add, .policy-port-add-range { white-space: nowrap; }
+.preview-stale { opacity: 0.65; }
 .empty-rules { margin-top: 0.75rem; padding: 0.7rem 0.8rem; border-left: 3px solid var(--bs-warning); background: var(--bs-warning-bg-subtle); color: var(--bs-warning-text-emphasis); font-size: 0.85rem; }
 .empty-rules-muted { border-left-color: var(--bs-secondary-color); background: var(--bs-secondary-bg); color: var(--bs-secondary-color); }
 .preview-panel { padding: 1rem; color: var(--bs-body-color); border: 1px solid var(--bs-border-color); border-radius: 7px; background: var(--bs-tertiary-bg); }
@@ -627,6 +642,6 @@ export default {
 .policy-history-status-success { color: var(--bs-success-text-emphasis); }
 .policy-history-status-warning { color: var(--bs-warning-text-emphasis); }
 .policy-history-status-danger { color: var(--bs-danger-text-emphasis); }
-@media (max-width: 768px) { .network-policy-overlay { padding: 0.5rem; } .policy-target { grid-template-columns: 1fr; gap: 0.85rem; } .policy-tabs { gap: 0.25rem; } .policy-tab { flex: 0 0 auto; } .policy-port-inputs { flex-wrap: wrap; } .policy-port-inputs .form-control { flex: 1 1 9rem; } }
+@media (max-width: 768px) { .network-policy-overlay { padding: 0.5rem; } .policy-target { grid-template-columns: 1fr; gap: 0.85rem; } .policy-tabs { gap: 0.25rem; } .policy-tab { flex: 0 0 auto; } .policy-target-group-head { grid-template-columns: minmax(0, 1fr) auto; } .policy-dest-input { grid-column: 1 / -1; } }
 @media (max-width: 460px) { .network-policy-overlay { padding: 0; } .network-policy-workbench { min-height: 100%; border-radius: 0; } }
 </style>

@@ -1,3 +1,5 @@
+import {parseCidr} from "cidr-tools";
+
 const PORT_MIN = 1;
 const PORT_MAX = 65535;
 
@@ -32,11 +34,30 @@ const groupSort = (left, right) => {
 	return left.protocol.localeCompare(right.protocol);
 };
 
-export const portGroupKey = (destination, protocol) => `${destination}\u0000${normalizeProtocol(protocol)}`;
+let groupUidCounter = 0;
+
+export const nextGroupUid = () => {
+	groupUidCounter += 1;
+	return groupUidCounter;
+};
+
+const canonicalDestination = (destination) => {
+	const value = String(destination || "").trim();
+	if (!value) return "";
+	try {
+		const parsed = parseCidr(value);
+		return `${String(parsed.ip)}/${parsed.prefix}`.toLowerCase();
+	} catch (_) {
+		return value;
+	}
+};
+
+export const portGroupKey = (destination, protocol) => `${canonicalDestination(destination)}\u0000${normalizeProtocol(protocol)}`;
 
 export const emptyPort = () => ({from: null, to: null, showRange: false});
 
 export const emptyPortGroup = () => ({
+	uid: nextGroupUid(),
 	destination: "",
 	protocol: "tcp",
 	ports: [emptyPort()],
@@ -47,6 +68,7 @@ export const normalizePortGroup = (group = {}) => {
 	const protocol = normalizeProtocol(group.protocol);
 	const ports = Array.isArray(group.ports) ? group.ports.map(normalizePort).sort(portSort) : [];
 	return {
+		uid: group.uid ?? nextGroupUid(),
 		destination: String(group.destination || "").trim(),
 		protocol,
 		ports: protocol === "icmp" ? [] : ports,
@@ -151,7 +173,7 @@ export const validatePolicyGroups = (groups = []) => {
 		if (!normalized.destination) continue;
 		const key = portGroupKey(normalized.destination, normalized.protocol);
 		if (groupIndexes.has(key)){
-			validations[index].groupError = "Duplicate destination and protocol groups are not allowed.";
+			validations[index].groupError = "A group for this destination and protocol already exists. Add ports to that group instead.";
 		}else{
 			groupIndexes.set(key, index);
 		}

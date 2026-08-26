@@ -17,7 +17,7 @@ CHAIN_PRIORITY = "filter - 10"
 INPUT_CHAIN_NAME = "input"
 DENIAL_NAT_CHAIN_NAME = "denial_prerouting"
 DENIAL_RESPONSE_PORT = 61573
-POLICY_RENDERER_VERSION = 2
+POLICY_RENDERER_VERSION = 3
 NFLOG_POLICY_DECISION_GROUP = 11501
 NFLOG_POLICY_ALLOWED_PREFIX = "wgd-audit:policy_allowed"
 NFLOG_POLICY_DENIED_PREFIX = "wgd-audit:policy_denied"
@@ -82,6 +82,35 @@ def _decision_log_expression(decision: str) -> str:
     return f'log prefix "{prefix}" group {NFLOG_POLICY_DECISION_GROUP}'
 
 
+def _input_catchall_lines(table_name: str, policy: NetworkPolicy, deny_expression: str, digest: str) -> list[str]:
+    family = _address_family(policy.tunnel_address)
+    reject_type = "icmp port-unreachable" if family == "ip" else "icmpv6 type admin-prohibited"
+    other_expression = (
+        "meta l4proto != tcp meta l4proto != udp meta l4proto != icmp"
+        if family == "ip"
+        else "meta l4proto != tcp meta l4proto != udp meta l4proto != ipv6-icmp"
+    )
+    return [
+        (
+            f"add rule {TABLE_FAMILY} {table_name} {INPUT_CHAIN_NAME} "
+            f"{deny_expression} ct state established,related accept "
+            f"comment \"wgd-policy:{digest}\""
+        ),
+        (
+            f"add rule {TABLE_FAMILY} {table_name} {INPUT_CHAIN_NAME} "
+            f"{deny_expression} meta l4proto udp {_decision_log_expression('policy_denied')} "
+            f"reject with {reject_type} "
+            f"comment \"wgd-policy:{digest}\""
+        ),
+        (
+            f"add rule {TABLE_FAMILY} {table_name} {INPUT_CHAIN_NAME} "
+            f"{deny_expression} {other_expression} {_decision_log_expression('policy_denied')} "
+            f"reject with {reject_type} "
+            f"comment \"wgd-policy:{digest}\""
+        ),
+    ]
+
+
 def compile_ruleset(policies: Iterable[NetworkPolicy], table_name: str = TABLE_NAME) -> tuple[str, str]:
     """Compile validated policies into an idempotent body for an existing table."""
     if table_name != TABLE_NAME and not table_name.endswith("_check"):
@@ -134,6 +163,7 @@ def compile_ruleset(policies: Iterable[NetworkPolicy], table_name: str = TABLE_N
                 f"{deny_expression} ct status dnat tcp dport {DENIAL_RESPONSE_PORT} accept "
                 f"comment \"wgd-policy:{digest}\""
             )
+            lines.extend(_input_catchall_lines(table_name, validated, deny_expression, digest))
         for rule in sorted(validated.rules, key=_rule_sort_key):
             if rule.protocol == "icmp":
                 continue
@@ -170,6 +200,8 @@ def compile_ruleset(policies: Iterable[NetworkPolicy], table_name: str = TABLE_N
             f"{deny_expression} {_decision_log_expression('policy_denied')} "
             f"reject with {reject_type} comment \"wgd-policy:{digest}\""
         )
+        if family != "ip":
+            lines.extend(_input_catchall_lines(table_name, validated, deny_expression, digest))
     lines.append(
         f"add rule {TABLE_FAMILY} {table_name} {INPUT_CHAIN_NAME} "
         f"tcp dport {DENIAL_RESPONSE_PORT} reject with tcp reset comment \"wgd-denial-guard\""

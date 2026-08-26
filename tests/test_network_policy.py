@@ -23,8 +23,10 @@ except ModuleNotFoundError:
 
 from network_policy.agent_protocol import AgentProtocolError, AgentRequest
 from network_policy.agent import NftablesExecutor
+import network_policy.compiler as policy_compiler
 from network_policy.compiler import (
     DENIAL_RESPONSE_PORT,
+    POLICY_RENDERER_VERSION,
     NFLOG_POLICY_ALLOWED_PREFIX,
     NFLOG_POLICY_DECISION_GROUP,
     NFLOG_POLICY_DENIED_PREFIX,
@@ -88,6 +90,50 @@ def policy_payload(**overrides):
     payload.update(overrides)
     return payload
 
+
+FORWARD_SNAPSHOT = [
+    'add chain inet wgd_network_policy forward { type filter hook forward priority filter - 10; policy accept; }',
+    'add rule inet wgd_network_policy forward iifname "wg0" ip saddr 10.253.157.2 ip daddr 192.168.0.117/32 meta l4proto tcp log prefix "wgd-audit:policy_allowed" group 11501 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy forward iifname "wg0" ip saddr 10.253.157.2 ip daddr 192.168.0.134/32 tcp dport 8096 log prefix "wgd-audit:policy_allowed" group 11501 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy forward iifname "wg0" ip saddr 10.253.157.2 ip daddr 192.168.0.117/32 meta l4proto icmp log prefix "wgd-audit:policy_allowed" group 11501 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy forward iifname "wg0" ip saddr 10.253.157.2 ip daddr 192.168.0.134/32 meta l4proto icmp log prefix "wgd-audit:policy_allowed" group 11501 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy forward iifname "wg0" ip saddr 10.253.157.2 meta l4proto tcp log prefix "wgd-audit:policy_denied" group 11501 reject with tcp reset comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy forward iifname "wg0" ip saddr 10.253.157.2 meta l4proto udp log prefix "wgd-audit:policy_denied" group 11501 reject with icmp port-unreachable comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy forward iifname "wg0" ip saddr 10.253.157.2 log prefix "wgd-audit:policy_denied" group 11501 reject with icmp port-unreachable comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy forward iifname "wg0" ip saddr 10.253.157.49 ip daddr 192.168.0.175/32 tcp dport 3000 log prefix "wgd-audit:policy_allowed" group 11501 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy forward iifname "wg0" ip saddr 10.253.157.49 ip daddr 192.168.0.175/32 tcp dport 5432 log prefix "wgd-audit:policy_allowed" group 11501 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy forward iifname "wg0" ip saddr 10.253.157.49 ip daddr 192.168.0.175/32 tcp dport 5435 log prefix "wgd-audit:policy_allowed" group 11501 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy forward iifname "wg0" ip saddr 10.253.157.49 ip daddr 192.168.0.175/32 tcp dport 6379 log prefix "wgd-audit:policy_allowed" group 11501 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy forward iifname "wg0" ip saddr 10.253.157.49 ip daddr 192.168.0.175/32 tcp dport 8080 log prefix "wgd-audit:policy_allowed" group 11501 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy forward iifname "wg0" ip saddr 10.253.157.49 ip daddr 192.168.0.175/32 tcp dport 8888 log prefix "wgd-audit:policy_allowed" group 11501 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy forward iifname "wg0" ip saddr 10.253.157.49 ip daddr 192.168.0.175/32 tcp dport 9090 log prefix "wgd-audit:policy_allowed" group 11501 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy forward iifname "wg0" ip saddr 10.253.157.49 ip daddr 192.168.0.175/32 tcp dport 19100 log prefix "wgd-audit:policy_allowed" group 11501 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy forward iifname "wg0" ip saddr 10.253.157.49 ip daddr 192.168.0.175/32 tcp dport 19256 log prefix "wgd-audit:policy_allowed" group 11501 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy forward iifname "wg0" ip saddr 10.253.157.49 ip daddr 192.168.0.175/32 meta l4proto icmp log prefix "wgd-audit:policy_allowed" group 11501 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy forward iifname "wg0" ip saddr 10.253.157.49 meta l4proto tcp log prefix "wgd-audit:policy_denied" group 11501 reject with tcp reset comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy forward iifname "wg0" ip saddr 10.253.157.49 meta l4proto udp log prefix "wgd-audit:policy_denied" group 11501 reject with icmp port-unreachable comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy forward iifname "wg0" ip saddr 10.253.157.49 log prefix "wgd-audit:policy_denied" group 11501 reject with icmp port-unreachable comment "wgd-policy:@DIGEST@"',
+]
+
+
+DENIAL_PREROUTING_SNAPSHOT = [
+    'add chain inet wgd_network_policy denial_prerouting { type nat hook prerouting priority dstnat; policy accept; }',
+    'add rule inet wgd_network_policy denial_prerouting iifname "wg0" ip saddr 10.253.157.2 ip daddr 192.168.0.117/32 meta l4proto tcp accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy denial_prerouting iifname "wg0" ip saddr 10.253.157.2 ip daddr 192.168.0.134/32 tcp dport 8096 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy denial_prerouting iifname "wg0" ip saddr 10.253.157.2 tcp dport 61573 accept comment "wgd-denial-guard"',
+    'add rule inet wgd_network_policy denial_prerouting iifname "wg0" ip saddr 10.253.157.2 meta l4proto tcp log prefix "wgd-audit:policy_denied" group 11501 redirect to :61573 comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy denial_prerouting iifname "wg0" ip saddr 10.253.157.49 ip daddr 192.168.0.175/32 tcp dport 3000 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy denial_prerouting iifname "wg0" ip saddr 10.253.157.49 ip daddr 192.168.0.175/32 tcp dport 5432 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy denial_prerouting iifname "wg0" ip saddr 10.253.157.49 ip daddr 192.168.0.175/32 tcp dport 5435 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy denial_prerouting iifname "wg0" ip saddr 10.253.157.49 ip daddr 192.168.0.175/32 tcp dport 6379 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy denial_prerouting iifname "wg0" ip saddr 10.253.157.49 ip daddr 192.168.0.175/32 tcp dport 8080 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy denial_prerouting iifname "wg0" ip saddr 10.253.157.49 ip daddr 192.168.0.175/32 tcp dport 8888 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy denial_prerouting iifname "wg0" ip saddr 10.253.157.49 ip daddr 192.168.0.175/32 tcp dport 9090 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy denial_prerouting iifname "wg0" ip saddr 10.253.157.49 ip daddr 192.168.0.175/32 tcp dport 19100 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy denial_prerouting iifname "wg0" ip saddr 10.253.157.49 ip daddr 192.168.0.175/32 tcp dport 19256 accept comment "wgd-policy:@DIGEST@"',
+    'add rule inet wgd_network_policy denial_prerouting iifname "wg0" ip saddr 10.253.157.49 tcp dport 61573 accept comment "wgd-denial-guard"',
+    'add rule inet wgd_network_policy denial_prerouting iifname "wg0" ip saddr 10.253.157.49 meta l4proto tcp log prefix "wgd-audit:policy_denied" group 11501 redirect to :61573 comment "wgd-policy:@DIGEST@"',
+]
 
 class NetworkPolicyValidationTest(unittest.TestCase):
     def test_canonicalizes_addresses_and_keeps_all_ports_explicit(self):
@@ -303,6 +349,110 @@ class NetworkPolicyCompilerTest(unittest.TestCase):
         ruleset, _ = compile_check_ruleset([policy])
         self.assertIn("add table inet wgd_network_policy_check", ruleset)
         self.assertNotIn("flush table inet wgd_network_policy\n", ruleset)
+
+    def test_input_chain_catchall_rules_for_managed_v4_peer(self):
+        policy = validate_policy(policy_payload(tunnel_address="10.8.0.2"))
+        ruleset, digest = compile_ruleset([policy])
+
+        expected = [
+            f'add rule inet {TABLE_NAME} input iifname "wg0" ip saddr 10.8.0.2 '
+            f"ct status dnat tcp dport {DENIAL_RESPONSE_PORT} accept "
+            f'comment "wgd-policy:{digest}"',
+            f'add rule inet {TABLE_NAME} input iifname "wg0" ip saddr 10.8.0.2 '
+            f"ct state established,related accept "
+            f'comment "wgd-policy:{digest}"',
+            f'add rule inet {TABLE_NAME} input iifname "wg0" ip saddr 10.8.0.2 '
+            f'meta l4proto udp log prefix "{NFLOG_POLICY_DENIED_PREFIX}" '
+            f"group {NFLOG_POLICY_DECISION_GROUP} reject with icmp port-unreachable "
+            f'comment "wgd-policy:{digest}"',
+            f'add rule inet {TABLE_NAME} input iifname "wg0" ip saddr 10.8.0.2 '
+            f"meta l4proto != tcp meta l4proto != udp meta l4proto != icmp "
+            f'log prefix "{NFLOG_POLICY_DENIED_PREFIX}" group {NFLOG_POLICY_DECISION_GROUP} '
+            f"reject with icmp port-unreachable "
+            f'comment "wgd-policy:{digest}"',
+            f"add rule inet {TABLE_NAME} input tcp dport {DENIAL_RESPONSE_PORT} "
+            'reject with tcp reset comment "wgd-denial-guard"',
+        ]
+        input_rules = [line for line in ruleset.splitlines() if line.startswith(f"add rule inet {TABLE_NAME} input ")]
+        self.assertEqual(expected, input_rules)
+
+    def test_input_chain_catchall_rules_for_managed_v6_peer(self):
+        policy = validate_policy(policy_payload(
+            tunnel_address="2001:db8::2",
+            rules=[
+                {"destination": "2001:db8:1::1", "protocol": "tcp", "ports": None},
+                {"destination": "2001:db8:1::1", "protocol": "icmp", "ports": None},
+            ],
+        ))
+        ruleset, digest = compile_ruleset([policy])
+
+        expected = [
+            f'add rule inet {TABLE_NAME} input iifname "wg0" ip6 saddr 2001:db8::2 '
+            f"ct state established,related accept "
+            f'comment "wgd-policy:{digest}"',
+            f'add rule inet {TABLE_NAME} input iifname "wg0" ip6 saddr 2001:db8::2 '
+            f'meta l4proto udp log prefix "{NFLOG_POLICY_DENIED_PREFIX}" '
+            f"group {NFLOG_POLICY_DECISION_GROUP} reject with icmpv6 type admin-prohibited "
+            f'comment "wgd-policy:{digest}"',
+            f'add rule inet {TABLE_NAME} input iifname "wg0" ip6 saddr 2001:db8::2 '
+            f"meta l4proto != tcp meta l4proto != udp meta l4proto != ipv6-icmp "
+            f'log prefix "{NFLOG_POLICY_DENIED_PREFIX}" group {NFLOG_POLICY_DECISION_GROUP} '
+            f"reject with icmpv6 type admin-prohibited "
+            f'comment "wgd-policy:{digest}"',
+            f"add rule inet {TABLE_NAME} input tcp dport {DENIAL_RESPONSE_PORT} "
+            'reject with tcp reset comment "wgd-denial-guard"',
+        ]
+        input_rules = [line for line in ruleset.splitlines() if line.startswith(f"add rule inet {TABLE_NAME} input ")]
+        self.assertEqual(expected, input_rules)
+        self.assertNotIn("ct status dnat", ruleset)
+
+    def test_renderer_version_is_three_and_hash_differs_from_v2(self):
+        self.assertEqual(3, POLICY_RENDERER_VERSION)
+        policies = [validate_policy(policy_payload())]
+        current_hash = policy_hash(policies)
+        original_version = policy_compiler.POLICY_RENDERER_VERSION
+        try:
+            policy_compiler.POLICY_RENDERER_VERSION = 2
+            legacy_hash = policy_hash(policies)
+        finally:
+            policy_compiler.POLICY_RENDERER_VERSION = original_version
+        self.assertNotEqual(legacy_hash, current_hash)
+        self.assertEqual(current_hash, policy_hash(policies))
+
+    def test_forward_and_denial_prerouting_output_matches_pre_change_snapshot(self):
+        phone = validate_policy(policy_payload(
+            tunnel_address="10.253.157.2",
+            rules=[
+                {"destination": "192.168.0.117", "protocol": "tcp", "ports": None},
+                {"destination": "192.168.0.134", "protocol": "tcp", "ports": {"from": 8096, "to": 8096}},
+                {"destination": "192.168.0.117", "protocol": "icmp", "ports": None},
+                {"destination": "192.168.0.134", "protocol": "icmp", "ports": None},
+            ],
+        ))
+        beijing = validate_policy(policy_payload(
+            tunnel_address="10.253.157.49",
+            rules=[
+                {"destination": "192.168.0.175", "protocol": "tcp", "ports": {"from": port, "to": port}}
+                for port in [3000, 5432, 5435, 6379, 8080, 8888, 9090, 19100, 19256]
+            ] + [{"destination": "192.168.0.175", "protocol": "icmp", "ports": None}],
+        ))
+        ruleset, digest = compile_ruleset([phone, beijing])
+
+        def snapshot_lines(chain):
+            return [
+                line for line in ruleset.splitlines()
+                if line.startswith(f"add chain inet {TABLE_NAME} {chain} ")
+                or line.startswith(f"add rule inet {TABLE_NAME} {chain} ")
+            ]
+
+        self.assertEqual(
+            [line.replace("@DIGEST@", digest) for line in FORWARD_SNAPSHOT],
+            snapshot_lines("forward"),
+        )
+        self.assertEqual(
+            [line.replace("@DIGEST@", digest) for line in DENIAL_PREROUTING_SNAPSHOT],
+            snapshot_lines("denial_prerouting"),
+        )
 
 
 class NetworkPolicyProtocolTest(unittest.TestCase):

@@ -16,7 +16,9 @@ try:
         AlertEvent,
         NetworkAuditAlertRunner,
         _alert_body,
+        _alert_detail,
         _alert_subject,
+        bounded_error,
         evaluate_health_snapshot,
         load_alert_configuration,
     )
@@ -163,6 +165,67 @@ class NetworkAuditAlertCoreTest(unittest.TestCase):
         self.assertIn("详细信息：健康快照已过期", body)
         self.assertIn("隧道地址：10.253.157.1", body)
         self.assertIn("策略判定表示网关观测结果", body)
+
+    def test_health_event_detail_carries_snapshot_last_error(self):
+        write_health_snapshot(
+            self.health_path,
+            HealthSnapshot(
+                HealthStatus.DEGRADED, BASE_TIME,
+                netlink_overruns=2, last_error="netlink event buffer overflow",
+            ),
+        )
+        timestamp = BASE_TIME.timestamp()
+        os.utime(self.health_path, (timestamp, timestamp))
+
+        events = evaluate_health_snapshot(self.health_path, now=BASE_TIME)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual("collector_health", events[0].identity)
+        self.assertEqual("collector status is degraded (netlink event buffer overflow)", events[0].detail)
+
+    def test_health_event_detail_without_last_error_keeps_status_only(self):
+        write_health_snapshot(self.health_path, HealthSnapshot(HealthStatus.FAILED, BASE_TIME))
+        timestamp = BASE_TIME.timestamp()
+        os.utime(self.health_path, (timestamp, timestamp))
+
+        events = evaluate_health_snapshot(self.health_path, now=BASE_TIME)
+
+        self.assertEqual(["collector status is failed"], [event.detail for event in events])
+
+    def test_alert_detail_maps_known_last_error_and_truncates_unknown(self):
+        self.assertEqual(
+            "采集器状态：降级，最后错误：netlink 事件缓冲溢出",
+            _alert_detail("collector status is degraded (netlink event buffer overflow)"),
+        )
+        self.assertEqual(
+            "采集器状态：失败，最后错误：审计数据库不可用",
+            _alert_detail("collector status is failed (audit database unavailable)"),
+        )
+        self.assertEqual("采集器状态：失败", _alert_detail("collector status is failed"))
+
+        unknown = "x" * 1000
+        self.assertEqual(
+            f"采集器状态：降级，最后错误：{bounded_error(unknown)}",
+            _alert_detail(f"collector status is degraded ({unknown})"),
+        )
+
+    def test_unrecognized_detail_is_returned_unchanged(self):
+        self.assertEqual("unexpected transport hiccup", _alert_detail("unexpected transport hiccup"))
+
+    def test_denied_event_body_has_no_detail_line(self):
+        event = AlertEvent(
+            identity=f"denied:{PUBLIC_KEY}",
+            alert_type="denied",
+            observed_value=2,
+            threshold=2,
+            peer_public_key=PUBLIC_KEY,
+            peer_name_snapshot="laptop",
+        )
+
+        body = _alert_body(event, BASE_TIME)
+
+        self.assertNotIn("详细信息", body)
+        self.assertIn("告警类型：策略拒绝", body)
 
     def test_runner_delivers_once_then_deduplicates_and_bounds_smtp_error(self):
         for _ in range(2):

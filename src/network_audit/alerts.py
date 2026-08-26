@@ -39,6 +39,15 @@ _ALERT_DETAIL_LABELS = {
     "collector configuration synchronization failed": "采集器配置同步失败",
     "collector audit storage writes are failing": "采集器审计存储写入失败",
 }
+_ERROR_LABELS = {
+    "collector failed": "采集器失败",
+    "conntrack unavailable": "conntrack 事件源不可用",
+    "nflog unavailable": "nflog 事件源不可用",
+    "collector configuration unavailable": "采集器配置不可用",
+    "audit database unavailable": "审计数据库不可用",
+    "audit config sync status unavailable": "审计配置同步状态不可用",
+    "netlink event buffer overflow": "netlink 事件缓冲溢出",
+}
 
 
 class AlertConfigurationError(ValueError):
@@ -243,7 +252,10 @@ def evaluate_health_snapshot(
     if current_time - modified_at > timeout:
         events.append(AlertEvent("collector_health", "collector_health", 1, None, detail="health snapshot is stale"))
     elif snapshot.status in {HealthStatus.DEGRADED, HealthStatus.FAILED}:
-        events.append(AlertEvent("collector_health", "collector_health", 1, None, detail=f"collector status is {snapshot.status.value}"))
+        detail = f"collector status is {snapshot.status.value}"
+        if snapshot.last_error:
+            detail = f"{detail} ({snapshot.last_error})"
+        events.append(AlertEvent("collector_health", "collector_health", 1, None, detail=detail))
     elif snapshot.config_sync_status == ConfigSyncStatus.FAILED:
         events.append(AlertEvent("collector_health", "collector_health", 1, None, detail="collector configuration synchronization failed"))
     if snapshot.write_failures > 0:
@@ -411,10 +423,16 @@ def _alert_subject(event: AlertEvent) -> str:
 def _alert_detail(detail: str) -> str:
     if detail in _ALERT_DETAIL_LABELS:
         return _ALERT_DETAIL_LABELS[detail]
-    status_match = re.fullmatch(r"collector status is (.+)", detail)
+    status_match = re.fullmatch(r"collector status is (\w+)(?: \((.+)\))?", detail)
     if status_match:
         status_labels = {"degraded": "降级", "failed": "失败", "healthy": "健康"}
-        return f"采集器状态：{status_labels.get(status_match.group(1), status_match.group(1))}"
+        status_label = status_labels.get(status_match.group(1), status_match.group(1))
+        last_error = status_match.group(2)
+        if last_error is None:
+            return f"采集器状态：{status_label}"
+        if last_error in _ERROR_LABELS:
+            return f"采集器状态：{status_label}，最后错误：{_ERROR_LABELS[last_error]}"
+        return f"采集器状态：{status_label}，最后错误：{bounded_error(last_error)}"
     return detail
 
 

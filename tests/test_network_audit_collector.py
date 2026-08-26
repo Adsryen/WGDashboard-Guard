@@ -1,9 +1,11 @@
+import errno
 import json
 import pathlib
 import socket
 import struct
 import sys
 import tempfile
+import types
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest import mock
@@ -20,6 +22,8 @@ from network_audit.collector import (
     AuditCollectorRuntime,
     AdapterCapability,
     CollectorCapabilityError,
+    NETLINK_ENOBUFS,
+    NETLINK_OVERFLOW_ERROR,
     NflogSocketAdapter,
     Pyroute2ConntrackAdapter,
     _AuditServiceWriter,
@@ -329,6 +333,31 @@ class CollectorHealthTest(unittest.TestCase):
                 spool.close()
 
 
+class HealthSnapshotNetlinkOverrunsTest(unittest.TestCase):
+    def test_new_field_round_trips_through_payload(self):
+        snapshot = HealthSnapshot(
+            HealthStatus.DEGRADED, BASE_TIME,
+            netlink_overruns=17, last_error=NETLINK_OVERFLOW_ERROR,
+        )
+
+        payload = snapshot.to_payload()
+
+        self.assertEqual(17, payload["netlink_overruns"])
+        self.assertEqual(snapshot, HealthSnapshot.from_payload(payload))
+
+    def test_old_format_payload_without_new_field_reads_zero(self):
+        payload = HealthSnapshot(HealthStatus.HEALTHY, BASE_TIME, netlink_overruns=9).to_payload()
+        del payload["netlink_overruns"]
+
+        self.assertEqual(0, HealthSnapshot.from_payload(payload).netlink_overruns)
+
+    def test_unknown_field_still_rejected(self):
+        payload = HealthSnapshot(HealthStatus.HEALTHY, BASE_TIME).to_payload()
+
+        with self.assertRaises(AuditValidationError):
+            HealthSnapshot.from_payload({**payload, "raw_packet": "secret"})
+
+
 class AdapterCapabilityTest(unittest.TestCase):
     def test_conntrack_subscription_includes_new_update_and_destroy_groups(self):
         self.assertEqual(7, _netlink_multicast_mask((1, 2, 3)))
@@ -400,6 +429,183 @@ class AdapterCapabilityTest(unittest.TestCase):
         self.assertEqual([(adapter._NFULA_CFG_MODE, struct.pack("!IBx", 64, adapter._NFULNL_COPY_PACKET))], attributes)
 
 
+class FakeNetlinkSocket:
+    def __init__(self, results):
+        self.results = list(results)
+        self.bound_address = None
+        self.sent_messages = []
+        self.closed = False
+
+    def bind(self, address):
+        self.bound_address = address
+
+    def sendto(self, message, address):
+        self.sent_messages.append(message)
+
+    def recv(self, size):
+        result = self.results.pop(0)
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    def close(self):
+        self.closed = True
+
+
+def _fake_socket_module(sockets):
+    module = mock.Mock()
+    module.AF_UNSPEC = 0
+    module.AF_NETLINK = 16
+    module.AF_INET = 2
+    module.AF_INET6 = 10
+    module.SOCK_RAW = 3
+    queue = list(sockets)
+    module.socket = lambda *arguments: queue.pop(0)
+    return module
+
+
+class ConntrackNetlinkOverrunsTest(unittest.TestCase):
+    def _fake_pyroute2_modules(self, messages):
+        pyroute2 = types.ModuleType("pyroute2")
+        netlink = types.ModuleType("pyroute2.netlink")
+        nfnetlink = types.ModuleType("pyroute2.netlink.nfnetlink")
+        nfctsocket = types.ModuleType("pyroute2.netlink.nfnetlink.nfctsocket")
+        nfnetlink.NFNLGRP_CONNTRACK_NEW = 1
+        nfnetlink.NFNLGRP_CONNTRACK_UPDATE = 2
+        nfnetlink.NFNLGRP_CONNTRACK_DESTROY = 3
+
+        class Marshal:
+            def parse(self, datagram, offset):
+                return list(messages)
+
+        class AsyncNFCTSocket:
+            def __init__(self):
+                self.marshal = Marshal()
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        nfctsocket.AsyncNFCTSocket = AsyncNFCTSocket
+        pyroute2.netlink = netlink
+        netlink.nfnetlink = nfnetlink
+        netlink.nfctsocket = nfctsocket
+        return {
+            "pyroute2": pyroute2,
+            "pyroute2.netlink": netlink,
+            "pyroute2.netlink.nfnetlink": nfnetlink,
+            "pyroute2.netlink.nfnetlink.nfctsocket": nfctsocket,
+        }
+
+    def _conntrack_message(self):
+        return {
+            "header": {"type": 0, "flags": 1024},
+            "attrs": [
+                ["CTA_TUPLE_ORIG", {"attrs": [
+                    ["CTA_TUPLE_IP", {"attrs": [["CTA_IP_V4_SRC", "10.10.0.2"], ["CTA_IP_V4_DST", "198.51.100.20"]]}],
+                    ["CTA_TUPLE_PROTO", {"attrs": [["CTA_PROTO_NUM", 6], ["CTA_PROTO_SRC_PORT", 43123], ["CTA_PROTO_DST_PORT", 443]]}],
+                ]}],
+                ["CTA_COUNTERS_ORIG", {"attrs": [["CTA_COUNTERS_BYTES", 120]]}],
+                ["CTA_COUNTERS_REPLY", {"attrs": [["CTA_COUNTERS_BYTES", 44]]}],
+                ["CTA_ZONE", 3],
+            ],
+        }
+
+    def test_recv_enobufs_counts_overrun_and_keeps_draining(self):
+        datagram = b"\x00" * 64
+        fake_socket = FakeNetlinkSocket([
+            OSError(NETLINK_ENOBUFS, "No buffer space available"),
+            datagram,
+            datagram,
+        ])
+        adapter = Pyroute2ConntrackAdapter()
+        with mock.patch.object(Pyroute2ConntrackAdapter, "capability", return_value=AdapterCapability(True)), \
+                mock.patch.dict(sys.modules, self._fake_pyroute2_modules([self._conntrack_message()])), \
+                mock.patch("network_audit.collector.socket", _fake_socket_module([fake_socket])):
+            events = adapter.events()
+            first = next(events)
+            second = next(events)
+
+        self.assertEqual(1, adapter.overruns)
+        self.assertEqual((0, 7), fake_socket.bound_address)
+        self.assertEqual(ConntrackEvent("new", flow(zone=3), first.observed_at, 120, 44), first)
+        self.assertEqual(ConntrackEvent("new", flow(zone=3), second.observed_at, 120, 44), second)
+
+    def test_recv_other_oerror_stays_fatal_without_overrun_count(self):
+        fake_socket = FakeNetlinkSocket([OSError(errno.EBADF, "Bad file descriptor")])
+        adapter = Pyroute2ConntrackAdapter()
+        with mock.patch.object(Pyroute2ConntrackAdapter, "capability", return_value=AdapterCapability(True)), \
+                mock.patch.dict(sys.modules, self._fake_pyroute2_modules([])), \
+                mock.patch("network_audit.collector.socket", _fake_socket_module([fake_socket])):
+            with self.assertRaises(CollectorCapabilityError) as context:
+                next(adapter.events())
+
+        self.assertEqual("conntrack subscription is unavailable", str(context.exception))
+        self.assertEqual(0, adapter.overruns)
+        self.assertTrue(fake_socket.closed)
+
+
+class NflogNetlinkOverrunsTest(unittest.TestCase):
+    def _ack(self, sequence):
+        return struct.pack("=IHHII", 20, 2, 0, sequence, 0) + struct.pack("=i", 0)
+
+    def _datagram(self, prefix, group):
+        def attribute(attribute_type, value):
+            length = 4 + len(value)
+            padding = (4 - length % 4) % 4
+            return struct.pack("=HH", length, attribute_type) + value + b"\x00" * padding
+
+        ipv4_tcp = bytes((0x45, 0, 0, 40, 0, 0, 0, 0, 64, 6, 0, 0, 10, 10, 0, 2, 198, 51, 100, 20))
+        tcp_header = struct.pack("!HH", 43123, 443)
+        attributes = b"".join((
+            attribute(9, ipv4_tcp + tcp_header),
+            attribute(10, prefix.encode("ascii") + b"\x00"),
+        ))
+        netlink_length = 16 + 4 + len(attributes)
+        return (
+            struct.pack("=IHHII", netlink_length, 1024, 0, 0, 0)
+            + bytes((socket.AF_INET, 0))
+            + struct.pack("!H", group)
+            + attributes
+        )
+
+    def test_recv_enobufs_counts_overrun_and_keeps_draining(self):
+        datagram = self._datagram("wgd-audit:policy_denied", 102)
+        fake_socket = FakeNetlinkSocket([
+            self._ack(1),
+            self._ack(2),
+            self._ack(3),
+            OSError(NETLINK_ENOBUFS, "No buffer space available"),
+            datagram,
+            datagram,
+        ])
+        adapter = NflogSocketAdapter({102})
+        with mock.patch("network_audit.collector.socket", _fake_socket_module([fake_socket, fake_socket])):
+            events = adapter.events()
+            first = next(events)
+            second = next(events)
+
+        self.assertEqual(1, adapter.overruns)
+        self.assertEqual((0, 0), fake_socket.bound_address)
+        self.assertEqual(AuditDecision.POLICY_DENIED, first.decision)
+        self.assertEqual(flow(), first.flow)
+        self.assertEqual(AuditDecision.POLICY_DENIED, second.decision)
+
+    def test_configure_socket_failure_stays_fatal_without_overrun_count(self):
+        fake_socket = FakeNetlinkSocket([
+            self._ack(1),
+            OSError(errno.EBADF, "Bad file descriptor"),
+        ])
+        adapter = NflogSocketAdapter({102})
+        with mock.patch("network_audit.collector.socket", _fake_socket_module([fake_socket, fake_socket])):
+            with self.assertRaises(CollectorCapabilityError) as context:
+                next(adapter.events())
+
+        self.assertEqual("NFLOG subscription is unavailable", str(context.exception))
+        self.assertEqual(0, adapter.overruns)
+        self.assertTrue(fake_socket.closed)
+
+
 class CollectorRuntimeTest(unittest.TestCase):
     def test_runtime_marks_failed_and_writes_health_before_missing_adapter_exits(self):
         class UnavailableAdapter:
@@ -445,6 +651,121 @@ class CollectorRuntimeTest(unittest.TestCase):
                     runtime.run()
 
                 self.assertEqual("collector failed", read_health_snapshot(health_path).last_error)
+            finally:
+                spool.close()
+
+    def test_runtime_netlink_overruns_sums_adapter_counters_with_getattr_tolerance(self):
+        class CountingAdapter:
+            overruns = 3
+
+        class UninstrumentedAdapter:
+            pass
+
+        runtime = AuditCollectorRuntime(mock.Mock(), CountingAdapter(), UninstrumentedAdapter())
+
+        self.assertEqual(3, runtime._netlink_overruns())
+
+
+class SettleNetlinkOverrunsTest(unittest.TestCase):
+    def _collector(self, spool, writer=None):
+        return AuditCollector(
+            audit_config(),
+            spool,
+            writer if writer is not None else (lambda _item: None),
+            now=BASE_TIME,
+        )
+
+    def test_new_delta_degrades_with_fixed_error_and_reports_in_snapshot(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            spool = AuditSpool(pathlib.Path(temporary_directory) / "spool.db")
+            try:
+                collector = self._collector(spool)
+                collector.settle_netlink_overruns(3)
+
+                self.assertEqual(HealthStatus.DEGRADED, collector.status)
+                self.assertEqual(NETLINK_OVERFLOW_ERROR, collector.last_error)
+                self.assertEqual(3, collector.netlink_overruns)
+                self.assertEqual(3, collector.health_snapshot().netlink_overruns)
+            finally:
+                spool.close()
+
+    def test_repeated_tick_without_new_delta_and_empty_spool_heals(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            spool = AuditSpool(pathlib.Path(temporary_directory) / "spool.db")
+            try:
+                collector = self._collector(spool)
+                collector.settle_netlink_overruns(3)
+                collector.settle_netlink_overruns(3)
+
+                self.assertEqual(HealthStatus.HEALTHY, collector.status)
+                self.assertIsNone(collector.last_error)
+                self.assertEqual(3, collector.netlink_overruns)
+            finally:
+                spool.close()
+
+    def test_failed_status_is_not_overwritten_by_overrun_degrade(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            spool = AuditSpool(pathlib.Path(temporary_directory) / "spool.db")
+            try:
+                collector = self._collector(spool)
+                collector.mark_failed("collector failed")
+                collector.settle_netlink_overruns(4)
+
+                self.assertEqual(HealthStatus.FAILED, collector.status)
+                self.assertEqual("collector failed", collector.last_error)
+                self.assertEqual(4, collector.netlink_overruns)
+            finally:
+                spool.close()
+
+    def test_self_heal_waits_while_write_failures_remain(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            spool = AuditSpool(pathlib.Path(temporary_directory) / "spool.db")
+            try:
+                collector = self._collector(
+                    spool,
+                    writer=lambda _item: (_ for _ in ()).throw(RuntimeError("database unavailable")),
+                )
+                spool.enqueue(observation(), BASE_TIME)
+                collector.flush(BASE_TIME + timedelta(seconds=5))
+                collector.settle_netlink_overruns(1)
+                collector.settle_netlink_overruns(1)
+
+                self.assertEqual(1, collector.write_failures)
+                self.assertEqual(HealthStatus.DEGRADED, collector.status)
+                self.assertEqual(NETLINK_OVERFLOW_ERROR, collector.last_error)
+            finally:
+                spool.close()
+
+    def test_self_heal_waits_until_spool_is_drained(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            spool = AuditSpool(pathlib.Path(temporary_directory) / "spool.db")
+            try:
+                collector = self._collector(spool)
+                spool.enqueue(observation(), BASE_TIME)
+                collector.settle_netlink_overruns(1)
+                collector.settle_netlink_overruns(1)
+
+                self.assertEqual(HealthStatus.DEGRADED, collector.status)
+
+                collector.spool.flush(lambda _item: None, now=BASE_TIME + timedelta(seconds=5))
+                collector.settle_netlink_overruns(1)
+
+                self.assertEqual(HealthStatus.HEALTHY, collector.status)
+                self.assertIsNone(collector.last_error)
+            finally:
+                spool.close()
+
+    def test_counter_wraparound_is_clamped_to_last_seen(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            spool = AuditSpool(pathlib.Path(temporary_directory) / "spool.db")
+            try:
+                collector = self._collector(spool)
+                collector.settle_netlink_overruns(5)
+                collector.settle_netlink_overruns(2)
+
+                self.assertEqual(5, collector.netlink_overruns)
+                self.assertEqual(HealthStatus.HEALTHY, collector.status)
+                self.assertIsNone(collector.last_error)
             finally:
                 spool.close()
 

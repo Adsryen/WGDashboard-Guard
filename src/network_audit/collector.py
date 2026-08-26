@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import errno
 import importlib.util
 import ipaddress
 import queue
@@ -58,6 +59,9 @@ _DECISION_PREFIXES = {
     "wgd-audit:policy_allowed": "policy_allowed",
     "wgd-audit:policy_denied": "policy_denied",
 }
+
+NETLINK_ENOBUFS = getattr(errno, "ENOBUFS", 105)
+NETLINK_OVERFLOW_ERROR = "netlink event buffer overflow"
 
 
 def _align(length: int) -> int:
@@ -238,6 +242,9 @@ class Pyroute2ConntrackAdapter:
 
     NETLINK_NETFILTER = 12
 
+    def __init__(self) -> None:
+        self.overruns = 0
+
     def capability(self) -> AdapterCapability:
         if importlib.util.find_spec("pyroute2") is None:
             return AdapterCapability(False, "pyroute2 is not installed")
@@ -282,7 +289,14 @@ class Pyroute2ConntrackAdapter:
         try:
             conntrack_socket.bind((0, groups))
             while True:
-                for message in parser.marshal.parse(conntrack_socket.recv(65536), 0):
+                try:
+                    datagram = conntrack_socket.recv(65536)
+                except OSError as error:
+                    if error.errno != NETLINK_ENOBUFS:
+                        raise CollectorCapabilityError("conntrack subscription is unavailable") from error
+                    self.overruns += 1
+                    continue
+                for message in parser.marshal.parse(datagram, 0):
                     try:
                         yield decode_conntrack_message(message)
                     except (MetadataDecodeError, AuditValidationError):
@@ -311,6 +325,7 @@ class NflogSocketAdapter:
 
     def __init__(self, accepted_groups: set[int] | None = None):
         self.accepted_groups = set(accepted_groups or ())
+        self.overruns = 0
 
     def capability(self) -> AdapterCapability:
         if not hasattr(socket, "AF_NETLINK"):
@@ -333,9 +348,14 @@ class NflogSocketAdapter:
             nflog_socket.bind((0, 0))
             self._configure_socket(nflog_socket)
             while True:
-                for event in decode_nflog_datagram(
-                    nflog_socket.recv(65536), accepted_groups=self.accepted_groups
-                ):
+                try:
+                    datagram = nflog_socket.recv(65536)
+                except OSError as error:
+                    if error.errno != NETLINK_ENOBUFS:
+                        raise CollectorCapabilityError("NFLOG subscription is unavailable") from error
+                    self.overruns += 1
+                    continue
+                for event in decode_nflog_datagram(datagram, accepted_groups=self.accepted_groups):
                     yield event
         except OSError as error:
             raise CollectorCapabilityError("NFLOG subscription is unavailable") from error
@@ -432,6 +452,8 @@ class AuditCollector:
         self.last_persisted_at: datetime | None = None
         self.nflog_events = 0
         self.conntrack_events = 0
+        self.netlink_overruns = 0
+        self._last_netlink_overruns = 0
         self.write_failures = 0
         self.last_error: str | None = None
         self.status = HealthStatus.STARTING
@@ -481,6 +503,24 @@ class AuditCollector:
             self.status = HealthStatus.DEGRADED
             self.last_error = self._safe_error(detail)
 
+    def settle_netlink_overruns(self, cumulative: int) -> None:
+        if cumulative < self._last_netlink_overruns:
+            cumulative = self._last_netlink_overruns
+        self.netlink_overruns = cumulative
+        delta = cumulative - self._last_netlink_overruns
+        self._last_netlink_overruns = cumulative
+        if delta > 0:
+            self.mark_degraded(NETLINK_OVERFLOW_ERROR)
+        elif (
+            delta == 0
+            and self.status == HealthStatus.DEGRADED
+            and self.last_error == NETLINK_OVERFLOW_ERROR
+            and self.write_failures == 0
+            and self.spool.stats().records == 0
+        ):
+            self.status = HealthStatus.HEALTHY
+            self.last_error = None
+
     def health_snapshot(self) -> HealthSnapshot:
         spool_stats = self.spool.stats()
         sync_status = self._config_sync_status()
@@ -501,6 +541,7 @@ class AuditCollector:
             conntrack_events=self.conntrack_events,
             correlation_timeouts=self.correlator.stats.correlation_timeouts,
             incomplete_flows=self.correlator.stats.incomplete_flows,
+            netlink_overruns=self.netlink_overruns,
             write_failures=self.write_failures,
             last_error=last_error,
             config_generation=self.config.generation,
@@ -540,6 +581,7 @@ class AuditCollector:
             "conntrack unavailable",
             "nflog unavailable",
             "collector configuration unavailable",
+            NETLINK_OVERFLOW_ERROR,
         }
         if detail in known_failures:
             return detail
@@ -622,6 +664,7 @@ class AuditCollectorRuntime:
                 if time.monotonic() >= next_maintenance:
                     self.collector.expire()
                     self.collector.flush()
+                    self.collector.settle_netlink_overruns(self._netlink_overruns())
                     self.collector.write_health()
                     next_maintenance = time.monotonic() + self.health_interval.total_seconds()
         except (KeyboardInterrupt, SystemExit):
@@ -633,6 +676,9 @@ class AuditCollectorRuntime:
             if isinstance(error, CollectorCapabilityError):
                 raise
             raise CollectorCapabilityError("collector failed") from error
+
+    def _netlink_overruns(self) -> int:
+        return getattr(self.conntrack, "overruns", 0) + getattr(self.nflog, "overruns", 0)
 
     def _require_capabilities(self) -> None:
         unavailable = []

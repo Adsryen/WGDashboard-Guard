@@ -52,6 +52,7 @@ class HealthSnapshot:
     conntrack_events: int = 0
     correlation_timeouts: int = 0
     incomplete_flows: int = 0
+    netlink_overruns: int = 0
     write_failures: int = 0
     last_error: str | None = None
     config_generation: int = 0
@@ -87,7 +88,7 @@ class HealthSnapshot:
         object.__setattr__(self, "config_sync_error", self.config_sync_error)
         for field in (
             "spool_records", "spool_bytes", "dropped_records", "nflog_events", "conntrack_events",
-            "correlation_timeouts", "incomplete_flows", "write_failures", "config_generation",
+            "correlation_timeouts", "incomplete_flows", "netlink_overruns", "write_failures", "config_generation",
             "config_sync_generation",
         ):
             object.__setattr__(self, field, _counter(getattr(self, field), field))
@@ -105,6 +106,7 @@ class HealthSnapshot:
             "conntrack_events": self.conntrack_events,
             "correlation_timeouts": self.correlation_timeouts,
             "incomplete_flows": self.incomplete_flows,
+            "netlink_overruns": self.netlink_overruns,
             "write_failures": self.write_failures,
             "last_error": self.last_error,
             "config_generation": self.config_generation,
@@ -121,6 +123,7 @@ class HealthSnapshot:
         expected_fields = {
             "status", "started_at", "last_event_at", "last_persisted_at", "spool_records", "spool_bytes",
             "dropped_records", "nflog_events", "conntrack_events", "correlation_timeouts", "incomplete_flows",
+            "netlink_overruns",
             "write_failures", "last_error", "config_generation", "config_sync_status", "config_sync_at",
             "config_sync_generation", "config_sync_error",
         }

@@ -353,7 +353,7 @@ def API_AuthenticateLogin():
     totpEnabled = DashboardConfig.GetConfig("Account", "enable_totp")[1]
     totpValid = False
     if totpEnabled:
-        totpValid = pyotp.TOTP(DashboardConfig.GetConfig("Account", "totp_key")[1]).now() == data['totp']
+        totpValid = pyotp.TOTP(DashboardConfig.GetConfig("Account", "totp_key")[1]).now() == (data.get("totp") or "")
 
     if (valid
             and data['username'] == DashboardConfig.GetConfig("Account", "username")[1]

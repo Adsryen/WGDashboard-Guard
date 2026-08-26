@@ -78,6 +78,7 @@ const protocols = ["tcp", "udp", "icmp"];
 const decisions = Object.keys(decisionLabels);
 
 const activeTab = computed(() => auditTabs.some((tab) => tab.key === route.query.tab) ? route.query.tab : "summary");
+const summaryRangeLabel = computed(() => `${formatTimeMinute(filters.start_time)} ~ ${formatTimeMinute(filters.end_time)}`);
 const selectTab = (tab) => {
 	if (tab === activeTab.value) return;
 	router.replace({query: {...route.query, tab: tab === "summary" ? undefined : tab}});
@@ -280,10 +281,21 @@ const destinationInTunnelLabel = (value) => value === true ? GetLocale("Yes") : 
 const destinationInTunnelClass = (value) => value === true ? "text-bg-success" : value === false ? "text-bg-secondary" : "text-bg-light";
 const destinationInPolicyLabel = (value) => value === true ? GetLocale("Yes") : value === false ? GetLocale("No") : "-";
 const destinationInPolicyClass = (value) => value === true ? "text-bg-success" : value === false ? "text-bg-secondary" : "text-bg-light";
+const pad2 = (value) => String(value).padStart(2, "0");
 const formatTime = (value) => {
 	if (!value || value === "-") return "-";
 	const date = new Date(value);
-	return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+	return Number.isNaN(date.getTime()) ? value : `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
+};
+const formatTimeMinute = (value) => {
+	if (!value || value === "-") return "-";
+	const date = new Date(value);
+	return Number.isNaN(date.getTime()) ? value : `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+};
+const formatUtcTime = (value) => {
+	if (!value || value === "-") return "-";
+	const date = new Date(value);
+	return Number.isNaN(date.getTime()) ? value : `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())} ${pad2(date.getUTCHours())}:${pad2(date.getUTCMinutes())}:${pad2(date.getUTCSeconds())} UTC`;
 };
 const formatBytes = (value) => {
 	const bytes = Number(value || 0);
@@ -335,7 +347,7 @@ onMounted(refreshAll);
 			<div class="col-12 col-xl-8">
 				<div class="card h-100 shadow-sm">
 					<div class="card-header d-flex align-items-center gap-2">
-						<i class="bi bi-bar-chart-fill"></i><strong><LocaleText t="Last 24 hours summary" /></strong>
+						<i class="bi bi-bar-chart-fill"></i><strong><LocaleText t="Audit summary" /></strong><small class="text-muted ms-2">{{ summaryRangeLabel }}</small>
 					</div>
 					<div class="card-body">
 						<div class="row g-2" v-if="summary">
@@ -344,7 +356,7 @@ onMounted(refreshAll);
 							<div class="col-6 col-md-3"><div class="summary-stat"><small><LocaleText t="From Peer" /></small><strong>{{ formatBytes(summary.bytes_from_peer) }}</strong></div></div>
 							<div class="col-6 col-md-3"><div class="summary-stat"><small><LocaleText t="To Peer" /></small><strong>{{ formatBytes(summary.bytes_to_peer) }}</strong></div></div>
 						</div>
-						<p class="text-muted small mb-0 mt-3" v-if="summary"><LocaleText t="Latest activity window:" /> {{ formatTime(summary.latest_window_started_at) }}</p>
+						<p class="text-muted small mb-0 mt-3" v-if="summary"><LocaleText t="Latest activity window:" /> {{ formatUtcTime(summary.latest_window_started_at) }}</p>
 						<div class="text-muted" v-else><LocaleText t="No summary is available for the selected range." /></div>
 					</div>
 				</div>
@@ -396,20 +408,20 @@ onMounted(refreshAll);
 		<div class="card shadow-sm mb-3" v-show="activeTab === 'records'">
 			<div class="card-header d-flex flex-column flex-md-row align-items-md-center gap-2"><div><i class="bi bi-table me-2"></i><strong><LocaleText t="Activity windows" /></strong></div><small class="text-muted ms-md-auto"><LocaleText t="Results are fixed UTC five-minute windows." /> {{ pagination.total }} <LocaleText t="results" /></small></div>
 			<div class="table-responsive">
-				<table class="table table-hover align-middle mb-0">
+				<table class="table table-hover align-middle mb-0 audit-table">
 						<thead><tr><th><LocaleText t="Window" /></th><th><LocaleText t="Peer" /></th><th><LocaleText t="Destination" /></th><th><LocaleText t="Destination in tunnel network" /></th><th><LocaleText t="Matches policy allowed target" /></th><th><LocaleText t="Protocol" /></th><th><LocaleText t="Decision" /></th><th><LocaleText t="First seen" /></th><th><LocaleText t="Last seen" /></th><th><LocaleText t="Connections" /></th><th><LocaleText t="From Peer" /></th><th><LocaleText t="To Peer" /></th></tr></thead>
 					<tbody>
 						<tr v-for="record in records" :key="[record.window_started_at, record.peer_public_key, record.destination_address, record.protocol, record.destination_port, record.decision].join(':')">
-							<td class="text-nowrap">{{ formatTime(record.window_started_at) }}</td>
-							<td><strong>{{ record.peer_name_snapshot || '-' }}</strong><small class="d-block text-muted text-break">{{ record.peer_public_key }}</small><small class="d-block text-muted">{{ record.configuration_name }} · {{ record.tunnel_address }}</small></td>
-								<td class="text-break">{{ record.destination_address }}</td><td><span class="badge" :class="destinationInTunnelClass(record.destination_in_tunnel)">{{ destinationInTunnelLabel(record.destination_in_tunnel) }}</span></td><td><span class="badge" :class="destinationInPolicyClass(record.destination_in_policy)">{{ destinationInPolicyLabel(record.destination_in_policy) }}</span></td><td>{{ String(record.protocol || '').toUpperCase() }}<span class="d-block text-muted small">{{ portLabel(record) }}</span></td><td><span class="badge" :class="decisionClass(record.decision)">{{ decisionLabel(record.decision) }}</span></td><td class="text-nowrap">{{ formatTime(record.first_seen_at) }}</td><td class="text-nowrap">{{ formatTime(record.last_seen_at) }}</td><td>{{ record.connection_count }}</td><td>{{ formatBytes(record.bytes_from_peer) }}</td><td>{{ formatBytes(record.bytes_to_peer) }}</td>
+							<td class="text-nowrap">{{ formatUtcTime(record.window_started_at) }}</td>
+							<td><strong>{{ record.peer_name_snapshot || '-' }}</strong><small class="d-block text-muted audit-ellipsis audit-ellipsis-key" :title="record.peer_public_key">{{ record.peer_public_key }}</small><small class="d-block text-muted">{{ record.configuration_name }} · {{ record.tunnel_address }}</small></td>
+								<td><span class="audit-ellipsis audit-ellipsis-dest" :title="record.destination_address">{{ record.destination_address }}</span></td><td><span class="badge" :class="destinationInTunnelClass(record.destination_in_tunnel)">{{ destinationInTunnelLabel(record.destination_in_tunnel) }}</span></td><td><span class="badge" :class="destinationInPolicyClass(record.destination_in_policy)">{{ destinationInPolicyLabel(record.destination_in_policy) }}</span></td><td>{{ String(record.protocol || '').toUpperCase() }}<span class="d-block text-muted small">{{ portLabel(record) }}</span></td><td><span class="badge" :class="decisionClass(record.decision)">{{ decisionLabel(record.decision) }}</span></td><td class="text-nowrap">{{ formatTime(record.first_seen_at) }}</td><td class="text-nowrap">{{ formatTime(record.last_seen_at) }}</td><td>{{ record.connection_count }}</td><td>{{ formatBytes(record.bytes_from_peer) }}</td><td>{{ formatBytes(record.bytes_to_peer) }}</td>
 						</tr>
 							<tr v-if="!loadingAudit && records.length === 0"><td colspan="12" class="text-center text-muted py-4"><LocaleText t="No audit activity matches the selected filters." /></td></tr>
 							<tr v-if="loadingAudit"><td colspan="12" class="text-center py-4"><span class="spinner-border spinner-border-sm me-2"></span><LocaleText t="Loading audit records..." /></td></tr>
 					</tbody>
 				</table>
 			</div>
-			<div class="card-footer d-flex align-items-center gap-2"><button class="btn btn-outline-secondary btn-sm" :disabled="!canGoPrevious" @click="loadAudit(pagination.page - 1)"><LocaleText t="Previous" /></button><span class="small text-muted"><LocaleText t="Page" /> {{ pagination.page }} <LocaleText t="of" /> {{ totalPages }}</span><button class="btn btn-outline-secondary btn-sm" :disabled="!canGoNext" @click="loadAudit(pagination.page + 1)"><LocaleText t="Next" /></button><small class="text-muted ms-auto" v-if="pagination.total_capped"><LocaleText t="Only the first 5,000 matching results are available." /></small></div>
+			<div class="card-footer d-flex align-items-center gap-2"><button class="btn btn-outline-secondary btn-sm" :disabled="!canGoPrevious" @click="loadAudit(pagination.page - 1)"><LocaleText t="Previous" /></button><span class="small text-muted"><LocaleText t="Page" /> {{ pagination.page }} <LocaleText t="of" /> {{ totalPages }}</span><button class="btn btn-outline-secondary btn-sm" :disabled="!canGoNext" @click="loadAudit(pagination.page + 1)"><LocaleText t="Next page" /></button><small class="text-muted ms-auto" v-if="pagination.total_capped"><LocaleText t="Only the first 5,000 matching results are available." /></small></div>
 		</div>
 
 		<div class="row g-3 mb-3" v-show="activeTab === 'alerts'">
@@ -470,6 +482,25 @@ onMounted(refreshAll);
 .health-list dd {
 	margin-bottom: .45rem;
 	overflow-wrap: anywhere;
+}
+
+.audit-table thead th {
+	white-space: nowrap;
+}
+
+.audit-ellipsis {
+	display: block;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.audit-ellipsis-dest {
+	max-width: 170px;
+}
+
+.audit-ellipsis-key {
+	max-width: 230px;
 }
 
 .spin {

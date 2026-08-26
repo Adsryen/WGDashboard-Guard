@@ -111,7 +111,13 @@ const ruleSummary = (row) => {
 		return `${group.destination} ${group.protocol.toUpperCase()}${ports}`;
 	}).join("; ");
 };
-const formatDate = (value) => value ? new Date(value.replace(" ", "T") + "Z").toLocaleString() : "-";
+const pad2 = (value) => String(value).padStart(2, "0");
+const formatDate = (value) => {
+	if (!value) return "-";
+	const date = new Date(String(value).replace(" ", "T") + "Z");
+	if (Number.isNaN(date.getTime())) return value;
+	return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
+};
 const canOpenPolicy = (row) => row.peer_present && row.eligible;
 const peerTunnelAddresses = (row) => rows.value
 	.filter(candidate => candidate.peer_present
@@ -225,7 +231,7 @@ const syncRuntime = async () => {
 
 		<div v-if="error" class="alert alert-danger">{{ error }}</div>
 		<div v-else class="table-responsive border rounded-3">
-			<table class="table table-hover align-middle mb-0">
+			<table class="table table-hover align-middle mb-0 policy-table">
 				<thead class="table-light">
 					<tr>
 						<th><LocaleText t="Peer" /></th>
@@ -262,7 +268,7 @@ const syncRuntime = async () => {
 						</td>
 						<td class="small text-muted">{{ formatDate(row.last_apply_at || row.updated_at) }}</td>
 						<td class="text-end">
-							<button class="btn btn-sm btn-primary" type="button" :disabled="!canOpenPolicy(row)" :title="canOpenPolicy(row) ? GetLocale('Configure policy') : GetLocale('Single-host tunnel address is required')" @click="openPolicy(row)">
+							<button class="btn btn-sm btn-primary text-nowrap" type="button" :disabled="!canOpenPolicy(row)" :title="canOpenPolicy(row) ? GetLocale('Configure policy') : GetLocale('Single-host tunnel address is required')" @click="openPolicy(row)">
 								<i class="bi bi-shield-lock me-1"></i><LocaleText t="Configure policy" />
 							</button>
 						</td>
@@ -285,6 +291,7 @@ const syncRuntime = async () => {
 .toolbar select { max-width: 220px; }
 .search-control { max-width: 420px; }
 .rule-summary { min-width: 260px; max-width: 460px; word-break: break-word; }
+.policy-table thead th { white-space: nowrap; }
 .spin { display: inline-block; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (max-width: 992px) { .toolbar select, .search-control { max-width: none; width: 100%; } }

@@ -1,5 +1,6 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import {fetchGet} from "@/utilities/fetch.js";
+import {GetLocale} from "@/utilities/locale.js";
 import {WireguardConfigurationsStore} from "@/stores/WireguardConfigurationsStore.js";
 import {DashboardConfigurationStore} from "@/stores/DashboardConfigurationStore.js";
 
@@ -228,7 +229,7 @@ router.beforeEach(async (to, from, next) => {
 			}else{
 				dashboardConfigurationStore.Redirect = to;
 				next("/signin")
-				dashboardConfigurationStore.newMessage("WGDashboard", "Sign in session ended, please sign in again", "warning")
+				dashboardConfigurationStore.newMessage("WGDashboard", GetLocale("Sign in session ended, please sign in again"), "warning")
 			}
 		}else{
 			await dashboardConfigurationStore.getConfiguration()

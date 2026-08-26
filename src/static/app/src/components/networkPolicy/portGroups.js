@@ -16,7 +16,12 @@ const normalizePort = (port = {}) => {
 	const to = port.to === null || port.to === undefined || port.to === ""
 		? from
 		: asInteger(port.to);
-	return {from, to, showRange: Boolean(port.showRange || (from !== null && to !== from))};
+	return {
+		uid: port.uid ?? nextPortUid(),
+		from,
+		to,
+		showRange: Boolean(port.showRange || (from !== null && to !== from))
+	};
 };
 
 const portSort = (left, right) => {
@@ -41,6 +46,13 @@ export const nextGroupUid = () => {
 	return groupUidCounter;
 };
 
+let portUidCounter = 0;
+
+export const nextPortUid = () => {
+	portUidCounter += 1;
+	return portUidCounter;
+};
+
 const canonicalDestination = (destination) => {
 	const value = String(destination || "").trim();
 	if (!value) return "";
@@ -54,14 +66,15 @@ const canonicalDestination = (destination) => {
 
 export const portGroupKey = (destination, protocol) => `${canonicalDestination(destination)}\u0000${normalizeProtocol(protocol)}`;
 
-export const emptyPort = () => ({from: null, to: null, showRange: false});
+export const emptyPort = () => ({uid: nextPortUid(), from: null, to: null, showRange: false});
 
 export const emptyPortGroup = () => ({
 	uid: nextGroupUid(),
 	destination: "",
 	protocol: "tcp",
 	ports: [emptyPort()],
-	allPorts: false
+	allPorts: false,
+	touched: false
 });
 
 export const normalizePortGroup = (group = {}) => {
@@ -72,7 +85,8 @@ export const normalizePortGroup = (group = {}) => {
 		destination: String(group.destination || "").trim(),
 		protocol,
 		ports: protocol === "icmp" ? [] : ports,
-		allPorts: protocol !== "icmp" && Boolean(group.allPorts)
+		allPorts: protocol !== "icmp" && Boolean(group.allPorts),
+		touched: Boolean(group.touched)
 	};
 };
 

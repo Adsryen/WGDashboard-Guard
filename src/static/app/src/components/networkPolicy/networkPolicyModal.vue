@@ -35,6 +35,7 @@ export default {
 			previewHash: "",
 			previewRequired: true,
 			hasPersistedPolicy: false,
+			persistedPolicy: null,
 			persistedSignature: "",
 			disableConfirmation: false,
 			suppressTunnelAddressWatch: false,
@@ -83,7 +84,7 @@ export default {
 			return "Save changes to generate the exact nftables rules."
 		},
 		policySignature(){
-			return JSON.stringify(this.policy)
+			return this.projectSignature(this.policy)
 		},
 		hasUnappliedChanges(){
 			return this.policySignature !== this.persistedSignature
@@ -146,9 +147,23 @@ export default {
 			? this.target.tunnelAddress
 			: this.tunnelAddresses[0] || "";
 		await Promise.all([this.loadCapabilities(), this.loadPolicy()]);
+		if (!this.hasPersistedPolicy && this.policy.groups.length === 0){
+			this.activeTab = "rules";
+		}
 	},
 	methods: {
 		GetLocale,
+		projectSignature(policy){
+			return JSON.stringify({
+				managed: Boolean(policy.managed),
+				groups: (policy.groups || []).map((group) => ({
+					destination: group.destination,
+					protocol: group.protocol,
+					allPorts: Boolean(group.allPorts),
+					ports: (group.ports || []).map((port) => ({from: port.from, to: port.to}))
+				}))
+			})
+		},
 		basePayload(){
 			return {
 				configuration_name: this.target.configurationName,
@@ -175,12 +190,13 @@ export default {
 			}
 			await fetchPost("/api/networkPolicy/get", this.basePayload(), (res) => {
 				if (res.status){
-					const persistedPolicy = res.data.policy;
-					this.policy = persistedPolicy
-						? {managed: Boolean(persistedPolicy.managed), groups: groupRules(persistedPolicy.rules)}
+					const stored = res.data.policy;
+					this.policy = stored
+						? {managed: Boolean(stored.managed), groups: groupRules(stored.rules)}
 						: emptyPolicy();
-					this.hasPersistedPolicy = Boolean(res.data.policy);
-					this.persistedSignature = JSON.stringify(this.policy);
+					this.hasPersistedPolicy = Boolean(stored);
+					this.persistedPolicy = JSON.parse(JSON.stringify(this.policy));
+					this.persistedSignature = this.projectSignature(this.policy);
 					this.revisions = res.data.revisions || [];
 					this.previewRequired = true;
 					this.previewRuleset = "";
@@ -191,10 +207,18 @@ export default {
 			});
 		},
 		addGroup(){
-			this.policy.groups.push(emptyPortGroup());
+			if (!this.policy.managed){
+				this.policy.managed = true
+			}
+			this.policy.groups.push(emptyPortGroup())
 		},
 		onManagedChange(){
 			if (!this.policy.managed){
+				if (this.policy.groups.length
+					&& !window.confirm(GetLocale("Turn off forwarded access control? The destination groups in this window will be cleared."))){
+					this.policy.managed = true;
+					return;
+				}
 				this.policy.groups = [];
 			}
 		},
@@ -208,6 +232,7 @@ export default {
 			group.ports.splice(index, 1);
 		},
 		onAllPortsChange(group){
+			group.touched = true;
 			if (group.allPorts){
 				group.ports = [];
 			}else if (!group.ports.length){
@@ -215,6 +240,7 @@ export default {
 			}
 		},
 		onProtocolChange(group){
+			group.touched = true;
 			if (group.protocol === "icmp"){
 				group.allPorts = false;
 				group.ports = [];
@@ -227,10 +253,17 @@ export default {
 			return validatePolicyGroups(this.policy.groups)[groupIndex] || {groupError: "", portErrors: []};
 		},
 		groupError(groupIndex){
+			const group = this.policy.groups[groupIndex];
+			if (!group || !group.touched) return "";
 			return this.groupValidation(groupIndex).groupError;
 		},
 		portError(groupIndex, portIndex){
+			const group = this.policy.groups[groupIndex];
+			if (!group || !group.touched) return "";
 			return this.groupValidation(groupIndex).portErrors[portIndex] || "";
+		},
+		markTouched(group){
+			group.touched = true;
 		},
 		portGroupSummary(group){
 			if (group.protocol === "icmp") return GetLocale("No ports for ICMP");
@@ -261,6 +294,9 @@ export default {
 			if (!this.tunnelAddress){
 				this.error = GetLocale("Select a single-host tunnel address first.");
 				return;
+			}
+			for (const group of this.policy.groups){
+				group.touched = true;
 			}
 			await fetchPost("/api/networkPolicy/dryRun", this.basePayload(), (res) => {
 				if (res.status){
@@ -303,7 +339,7 @@ export default {
 			});
 		},
 		resetChanges(){
-			this.policy = this.hasPersistedPolicy ? JSON.parse(this.persistedSignature) : emptyPolicy();
+			this.policy = this.persistedPolicy ? JSON.parse(JSON.stringify(this.persistedPolicy)) : emptyPolicy();
 			this.previewRequired = true;
 			this.previewRuleset = "";
 			this.previewHash = "";
@@ -434,7 +470,7 @@ export default {
 						<div class="small text-muted"><LocaleText :t="policyModeDescription" /></div>
 					</div>
 				</div>
-				<div class="policy-overview-note mt-3"><i class="bi bi-info-circle"></i><span><LocaleText t="Each configured destination also permits ICMP diagnostics for that destination." /></span></div>
+				<div v-if="policy.managed && policy.groups.length" class="policy-overview-note mt-3"><i class="bi bi-info-circle"></i><span><LocaleText t="Each configured destination also permits ICMP diagnostics for that destination." /></span></div>
 			</section>
 			<section class="policy-section policy-rules-section mb-3" :class="{'policy-section-disabled': !policy.managed}">
 				<div class="d-flex align-items-center gap-2 mb-1">
@@ -442,12 +478,12 @@ export default {
 						<h6 class="mb-0"><LocaleText t="Allowed destinations" /></h6>
 						<div class="small text-muted"><LocaleText t="Add each network service this Peer may reach." /></div>
 					</div>
-					<button type="button" class="btn btn-sm btn-outline-primary ms-auto" :disabled="!policy.managed || !canManage" :title="GetLocale('Add destination group')" @click="addGroup"><i class="bi bi-plus-lg"></i><span class="ms-1"><LocaleText t="Add destination group" /></span></button>
+					<button type="button" class="btn btn-sm btn-outline-primary ms-auto" :disabled="!canManage" :title="GetLocale('Add destination group')" @click="addGroup"><i class="bi bi-plus-lg"></i><span class="ms-1"><LocaleText t="Add destination group" /></span></button>
 				</div>
 				<fieldset :disabled="!policy.managed || !canManage" class="policy-rules-fieldset">
 				<div v-for="(group, groupIndex) in policy.groups" :key="group.uid" class="policy-target-group">
 					<div class="policy-target-group-head">
-						<input class="form-control policy-dest-input" :class="{'is-invalid': groupError(groupIndex)}" v-model.trim="group.destination" placeholder="192.168.0.117/32" :aria-label="GetLocale('Destination IP or CIDR')">
+						<input class="form-control policy-dest-input" :class="{'is-invalid': groupError(groupIndex)}" v-model.trim="group.destination" placeholder="192.168.0.117/32" :aria-label="GetLocale('Destination IP or CIDR')" @blur="markTouched(group)">
 						<select class="form-select policy-proto-select" :aria-label="GetLocale('Protocol')" v-model="group.protocol" @change="onProtocolChange(group)"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="icmp">ICMP</option></select>
 						<label v-if="group.protocol !== 'icmp'" class="form-check m-0 policy-allports-check" :title="GetLocale('Allow every port on this destination')">
 							<input class="form-check-input" type="checkbox" v-model="group.allPorts" @change="onAllPortsChange(group)">
@@ -461,9 +497,10 @@ export default {
 					<div v-else class="policy-target-group-body">
 						<div class="policy-target-ports-label"><LocaleText t="Ports" /></div>
 						<div class="policy-port-grid">
-							<div v-for="(port, portIndex) in group.ports" :key="portIndex" class="policy-port-chip">
-								<input class="form-control policy-port-from" :class="{'is-invalid': portError(groupIndex, portIndex)}" type="number" min="1" max="65535" v-model.number="port.from" :placeholder="GetLocale('From')">
-								<input v-if="port.showRange" class="form-control policy-port-to" :class="{'is-invalid': portError(groupIndex, portIndex)}" type="number" min="1" max="65535" v-model.number="port.to" :placeholder="GetLocale('To')">
+						<div v-for="(port, portIndex) in group.ports" :key="port.uid" class="policy-port-chip">
+							<input class="form-control policy-port-from" :class="{'is-invalid': portError(groupIndex, portIndex)}" type="number" min="1" max="65535" v-model.number="port.from" :placeholder="GetLocale('From')" @blur="markTouched(group)">
+							<span v-if="port.showRange" class="policy-port-dash">–</span>
+							<input v-if="port.showRange" class="form-control policy-port-to" :class="{'is-invalid': portError(groupIndex, portIndex)}" type="number" min="1" max="65535" v-model.number="port.to" :placeholder="GetLocale('To')" @blur="markTouched(group)">
 								<button v-else type="button" class="btn btn-outline-secondary policy-port-range-toggle" :title="GetLocale('Use port range')" @click="port.showRange = true"><i class="bi bi-arrows-expand"></i></button>
 								<button type="button" class="btn btn-outline-danger policy-port-remove" :title="GetLocale('Remove port')" @click="removePort(group, portIndex)"><i class="bi bi-trash"></i></button>
 								<div v-if="portError(groupIndex, portIndex)" class="invalid-feedback d-block policy-port-error">{{ GetLocale(portError(groupIndex, portIndex)) }}</div>
@@ -517,7 +554,7 @@ export default {
 			<section class="policy-tab-actions policy-review-actions">
 				<div class="small text-muted"><i :class="[previewStale ? 'bi bi-exclamation-triangle' : (previewRuleset ? 'bi bi-shield-check' : 'bi bi-clipboard-check'), 'text-primary me-1']"></i><LocaleText :t="reviewHint" /></div>
 				<div class="d-flex flex-wrap gap-2 ms-auto">
-					<button type="button" class="btn btn-primary" :disabled="!canManage || previewStale || (!previewRuleset && !hasUnappliedChanges)" @click="runPrimaryAction"><i :class="[primaryActionIcon, 'me-1']"></i><LocaleText :t="primaryActionLabel"></LocaleText></button>
+					<button type="button" class="btn btn-primary" :disabled="!canManage || (!previewRuleset && !hasUnappliedChanges)" @click="runPrimaryAction"><i :class="[primaryActionIcon, 'me-1']"></i><LocaleText :t="primaryActionLabel"></LocaleText></button>
 					<button v-if="hasUnappliedChanges || previewRuleset" type="button" class="btn btn-outline-secondary" :disabled="applying" @click="resetChanges"><i class="bi bi-arrow-counterclockwise me-1"></i><LocaleText t="Discard changes" /></button>
 				</div>
 			</section>
@@ -596,20 +633,22 @@ export default {
 .policy-rules-fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .policy-section-disabled { opacity: 0.64; background: var(--bs-secondary-bg); }
 .policy-target-group { padding: 0.6rem 0.7rem; margin-bottom: 0.6rem; border: 1px solid var(--bs-border-color); border-radius: 7px; background: var(--bs-secondary-bg); }
-.policy-target-group-head { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 0.45rem; align-items: center; }
+.policy-target-group-head { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
 .policy-target-group-head .form-control, .policy-target-group-head .form-select { min-height: 2.375rem; }
-.policy-dest-input { min-width: 0; }
+.policy-dest-input { flex: 1 1 180px; max-width: 360px; min-width: 0; }
 .policy-proto-select { width: 5.5rem; }
 .policy-allports-check { white-space: nowrap; }
 .policy-allports-check .form-check-label { font-size: 0.85rem; }
 .policy-group-remove { display: inline-grid; width: 2.375rem; place-items: center; padding: 0; }
 .policy-group-error { margin-top: 0.45rem; }
-.policy-target-group-body { margin-top: 0.55rem; padding: 0.55rem 0.6rem 0.6rem; border-top: 1px dashed var(--bs-border-color); border-radius: 0 0 6px 6px; background: var(--bs-tertiary-bg); }
+.policy-target-group-body { margin: 0.55rem 0 0.2rem; padding: 0.6rem 0.7rem 0.65rem; border: 1px solid var(--bs-border-color); border-radius: 6px; background: var(--bs-body-bg); }
 .policy-target-group-body-muted { color: var(--bs-secondary-color); font-size: 0.85rem; }
 .policy-target-ports-label { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--bs-secondary-color); margin-bottom: 0.4rem; }
 .policy-port-grid { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
 .policy-port-chip { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
-.policy-port-from, .policy-port-to { width: 5.2rem; min-height: 2.375rem; }
+.policy-port-from, .policy-port-to { width: 4.7rem; min-height: 2.375rem; appearance: textfield; -moz-appearance: textfield; }
+.policy-port-from::-webkit-outer-spin-button, .policy-port-from::-webkit-inner-spin-button, .policy-port-to::-webkit-outer-spin-button, .policy-port-to::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.policy-port-dash { align-self: center; color: var(--bs-secondary-color); font-weight: 600; }
 .policy-port-range-toggle, .policy-port-remove { display: inline-grid; width: 2.375rem; min-height: 2.375rem; place-items: center; padding: 0; }
 .policy-port-error { flex-basis: 100%; }
 .policy-port-add, .policy-port-add-range { white-space: nowrap; }
@@ -642,6 +681,6 @@ export default {
 .policy-history-status-success { color: var(--bs-success-text-emphasis); }
 .policy-history-status-warning { color: var(--bs-warning-text-emphasis); }
 .policy-history-status-danger { color: var(--bs-danger-text-emphasis); }
-@media (max-width: 768px) { .network-policy-overlay { padding: 0.5rem; } .policy-target { grid-template-columns: 1fr; gap: 0.85rem; } .policy-tabs { gap: 0.25rem; } .policy-tab { flex: 0 0 auto; } .policy-target-group-head { grid-template-columns: minmax(0, 1fr) auto; } .policy-dest-input { grid-column: 1 / -1; } }
+@media (max-width: 768px) { .network-policy-overlay { padding: 0.5rem; } .policy-target { grid-template-columns: 1fr; gap: 0.85rem; } .policy-tabs { gap: 0.25rem; } .policy-tab { flex: 0 0 auto; } .policy-dest-input { flex-basis: 100%; max-width: none; } }
 @media (max-width: 460px) { .network-policy-overlay { padding: 0; } .network-policy-workbench { min-height: 100%; border-radius: 0; } }
 </style>

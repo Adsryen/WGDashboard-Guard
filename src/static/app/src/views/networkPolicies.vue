@@ -107,7 +107,7 @@ const ruleSummary = (row) => {
 		return row.policy_status === "managed" ? GetLocale("No destination is allowed. Applying this policy denies all forwarded traffic for this Peer.") : "-";
 	}
 	return groupRules(row.rules).map(group => {
-		const ports = group.protocol === "icmp" ? "" : group.allPorts ? "" : `:${group.ports.map(portLabel).join(",")}`;
+		const ports = group.protocol === "icmp" ? "" : group.allPorts ? `:${GetLocale("All ports")}` : `:${group.ports.map(portLabel).join(",")}`;
 		return `${group.destination} ${group.protocol.toUpperCase()}${ports}`;
 	}).join("; ");
 };

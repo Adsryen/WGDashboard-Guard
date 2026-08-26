@@ -51,7 +51,7 @@ const handleFailedResponse = async (response, callback) => {
 	const store = DashboardConfigurationStore();
 	const body = await parseErrorBody(response);
 	if (response.status === 401){
-		store.newMessage("WGDashboard", "Sign in session ended, please sign in again", "warning")
+		store.newMessage("WGDashboard", GetLocale("Sign in session ended, please sign in again"), "warning")
 		await router.push({path: '/signin'})
 	}
 	const message = (body && body.message) || `Request failed (${response.status} ${response.statusText})`;

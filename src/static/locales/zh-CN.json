@@ -682,5 +682,7 @@
 	"Network request failed. Please check your connection and try again.": "网络请求失败，请检查网络连接后重试。",
 	"You have unsaved changes. Switching the tunnel address will discard them. Continue?": "你有尚未保存的更改，切换隧道地址会丢弃这些更改。继续吗？",
 	"Roll back to this revision? The current policy will be replaced.": "回滚到此版本？当前策略将被替换。",
-	"Allow every port on this destination": "允许该目标地址的所有端口"
+	"Allow every port on this destination": "允许该目标地址的所有端口",
+	"Turn off forwarded access control? The destination groups in this window will be cleared.": "关闭转发访问控制？本窗口中已配置的目标组将被清空。",
+	"Save changes to generate the exact nftables rules.": "保存更改以生成确切的 nftables 规则。"
 }

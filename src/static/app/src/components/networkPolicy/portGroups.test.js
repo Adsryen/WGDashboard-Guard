@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+	emptyPort,
 	emptyPortGroup,
+	normalizePortGroup,
 	flattenGroups,
 	groupRules,
 	isPolicyGroupsValid,
@@ -71,6 +73,18 @@ test("rejects duplicate destination and protocol groups at the policy level", ()
 
 	assert.equal(validations[0].groupError, "");
 	assert.equal(validations[1].groupError, "");
-	assert.equal(validations[2].groupError, "Duplicate destination and protocol groups are not allowed.");
+	assert.equal(validations[2].groupError, "A group for this destination and protocol already exists. Add ports to that group instead.");
 	assert.equal(isPolicyGroupsValid(groups), false);
+});
+
+test("assigns stable identifiers to ports and tracks group touch state", () => {
+	const group = emptyPortGroup();
+	const firstPort = group.ports[0];
+	assert.equal(group.touched, false);
+	assert.ok(Number.isInteger(firstPort.uid));
+	assert.notEqual(firstPort.uid, emptyPort().uid);
+	assert.equal(normalizePortGroup({uid: group.uid, destination: group.destination, protocol: "tcp", allPorts: false, touched: false, ports: [{from: 8000, to: 8100, uid: firstPort.uid}]}).ports[0].uid, firstPort.uid);
+	assert.notEqual(normalizePortGroup({uid: group.uid, destination: group.destination, protocol: "tcp", allPorts: false, touched: false, ports: [{from: 443, to: 443}]}).ports[0].uid, firstPort.uid);
+	assert.equal(normalizePortGroup(group).touched, false);
+	assert.equal(normalizePortGroup({...group, touched: true}).touched, true);
 });

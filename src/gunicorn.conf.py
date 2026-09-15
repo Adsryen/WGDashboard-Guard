@@ -13,6 +13,11 @@ def post_worker_init(worker):
 worker_class = 'gthread'
 workers = 1
 threads = 2
+# 优雅关闭宽限：请求读超时为 cfg.timeout(30s)，这里留足余量，
+# 避免 SIGABRT 后的优雅关闭还没跑完就被 arbiter 判超时
+graceful_timeout = 45
+# 周期性回收 worker，防内存缓慢增长/状态漂移（约一周量级）
+max_requests = 5000
 bind = f"{app_host}:{app_port}"
 daemon = True
 pidfile = './gunicorn.pid'

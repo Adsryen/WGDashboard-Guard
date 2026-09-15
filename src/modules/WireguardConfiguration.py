@@ -26,6 +26,13 @@ from .WireguardConfigurationInfo import WireguardConfigurationInfo, PeerGroupsCl
 from .DashboardWebHooks import DashboardWebHooks
 
 
+# wg / wg-quick 命令的超时（秒）。
+# 背景：断电/网络异常后 wg 相关命令可能长时间不返回；这些命令都在
+# worker 线程里同步执行，一旦挂死会永久占用请求线程（threads=2 时
+# 两个挂死 = 整个 dashboard 冻结）。任何 wg 命令超过 20s 一律判失败。
+WG_CMD_TIMEOUT = 20
+
+
 class WireguardConfiguration:
     class InvalidConfigurationFileException(Exception):
         def __init__(self, m):
@@ -557,13 +564,13 @@ class WireguardConfiguration:
                         f.write(p['preshared_key'])
 
                 command = [self.Protocol, "set", self.Name, "peer", p['id'], "allowed-ips", cleanedAllowedIPs[p["id"]], "preshared-key", uid if presharedKeyExist else "/dev/null"]
-                subprocess.check_output(command, stderr=subprocess.STDOUT)
+                subprocess.check_output(command, stderr=subprocess.STDOUT, timeout=WG_CMD_TIMEOUT)
 
                 if presharedKeyExist:
                     os.remove(uid)
 
             command = [f"{self.Protocol}-quick", "save", self.Name]
-            subprocess.check_output(command, stderr=subprocess.STDOUT)
+            subprocess.check_output(command, stderr=subprocess.STDOUT, timeout=WG_CMD_TIMEOUT)
 
             self.getPeers()
             for p in peers:
@@ -622,7 +629,7 @@ class WireguardConfiguration:
                         return False, "Peer key format is incorrect"
 
                     command = [self.Protocol, "set", self.Name, "peer", restrictedPeer["id"], "allowed-ips", newAllowedIPs, "preshared-key", uid if presharedKeyExist else "/dev/null"]
-                    subprocess.check_output(command, stderr=subprocess.STDOUT)
+                    subprocess.check_output(command, stderr=subprocess.STDOUT, timeout=WG_CMD_TIMEOUT)
 
                     if presharedKeyExist: os.remove(uid)
                 else:
@@ -644,7 +651,7 @@ class WireguardConfiguration:
                 if found:
                     try:
                         command = [self.Protocol, "set", self.Name, "peer", pf.id, "remove"]
-                        subprocess.check_output(command, stderr=subprocess.STDOUT)
+                        subprocess.check_output(command, stderr=subprocess.STDOUT, timeout=WG_CMD_TIMEOUT)
 
                         conn.execute(
                             self.peersRestrictedTable.insert().from_select(
@@ -696,7 +703,8 @@ class WireguardConfiguration:
                 if found:
                     try:
                         subprocess.check_output(f"{self.Protocol} set {self.Name} peer {pf.id} remove",
-                                                shell=True, stderr=subprocess.STDOUT)
+                                                shell=True, stderr=subprocess.STDOUT,
+                                                timeout=WG_CMD_TIMEOUT)
                         conn.execute(
                             self.peersTable.delete().where(
                                 self.peersTable.columns.id == pf.id
@@ -727,11 +735,14 @@ class WireguardConfiguration:
     def __wgSave(self) -> tuple[bool, str] | tuple[bool, None]:
         try:
             command = [f"{self.Protocol}-quick", "save", self.Name]
-            subprocess.check_output(command, stderr=subprocess.STDOUT)
+            subprocess.check_output(command, stderr=subprocess.STDOUT, timeout=WG_CMD_TIMEOUT)
 
             return True, None
         except subprocess.CalledProcessError as e:
             current_app.logger.error(f"Failed to process command:\n{str(e)}")
+            return False, "Internal server error"
+        except subprocess.TimeoutExpired as e:
+            current_app.logger.error(f"Failed to process command (timeout):\n{str(e)}")
             return False, "Internal server error"
 
     def getPeersLatestHandshake(self):
@@ -739,8 +750,8 @@ class WireguardConfiguration:
             self.toggleConfiguration()
         try:
             command = [self.Protocol, "show", self.Name, "latest-handshakes"]
-            latestHandshake = subprocess.check_output(command, stderr=subprocess.STDOUT)
-        except subprocess.CalledProcessError:
+            latestHandshake = subprocess.check_output(command, stderr=subprocess.STDOUT, timeout=WG_CMD_TIMEOUT)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             return "stopped"
         latestHandshake = latestHandshake.decode("UTF-8").split()
         count = 0
@@ -779,7 +790,7 @@ class WireguardConfiguration:
             self.toggleConfiguration()
         # try:
         command = [self.Protocol, "show", self.Name, "transfer"]
-        data_usage = subprocess.check_output(command, stderr=subprocess.STDOUT)
+        data_usage = subprocess.check_output(command, stderr=subprocess.STDOUT, timeout=WG_CMD_TIMEOUT)
 
         data_usage = data_usage.decode("UTF-8").split("\n")
         
@@ -836,8 +847,8 @@ class WireguardConfiguration:
             self.toggleConfiguration()
         try:
             command = [self.Protocol, "show", self.Name, "endpoints"]
-            data_usage = subprocess.check_output(command, stderr=subprocess.STDOUT)
-        except subprocess.CalledProcessError:
+            data_usage = subprocess.check_output(command, stderr=subprocess.STDOUT, timeout=WG_CMD_TIMEOUT)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             return "stopped"
 
         data_usage = data_usage.decode("UTF-8").split()
@@ -858,19 +869,23 @@ class WireguardConfiguration:
         if self.Status:
             try:
                 command = [f"{self.Protocol}-quick", "down", self.Name]
-                check = subprocess.check_output(command, stderr=subprocess.STDOUT)
+                check = subprocess.check_output(command, stderr=subprocess.STDOUT, timeout=WG_CMD_TIMEOUT)
 
                 self.removeAutostart()
             except subprocess.CalledProcessError as exc:
                 return False, str(exc.output.strip().decode("utf-8"))
+            except subprocess.TimeoutExpired:
+                return False, "WireGuard command timed out"
         else:
             try:
                 command = [f"{self.Protocol}-quick", "up", self.Name]
-                check = subprocess.check_output(command, stderr=subprocess.STDOUT)
+                check = subprocess.check_output(command, stderr=subprocess.STDOUT, timeout=WG_CMD_TIMEOUT)
 
                 self.addAutostart()
             except subprocess.CalledProcessError as exc:
                 return False, str(exc.output.strip().decode("utf-8"))
+            except subprocess.TimeoutExpired:
+                return False, "WireGuard command timed out"
         self.__parseConfigurationFile()
         self.getStatus()
         return True, None

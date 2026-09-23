@@ -3,7 +3,12 @@ Description=WGDashboard Network Policy Denial Responder
 Documentation=https://github.com/WGDashboard/WGDashboard
 After=network-online.target wgd-network-policy-agent.service
 Wants=network-online.target
-Requires=wgd-network-policy-agent.service
+# 2026-09-23: Wants, not Requires. The collector was killed off at boot by Requires=agent
+# on 2026-09-22 and stayed down for 21h30m; this responder only needs a TCP listener and
+# has no hard dependency on the Agent's socket.
+Wants=wgd-network-policy-agent.service
+StartLimitIntervalSec=0
+StartLimitBurst=0
 
 [Service]
 Type=simple

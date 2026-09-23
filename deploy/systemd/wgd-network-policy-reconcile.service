@@ -1,0 +1,33 @@
+[Unit]
+Description=WGDashboard Network Policy Runtime Reconcile
+Documentation=https://github.com/WGDashboard/WGDashboard
+# 2026-09-23: 这里刻意用 Wants 而不是 Requires。9/22 重启时 collector 因为 Requires=agent
+# 被依赖连坐判死，一天半没跑；oneshot 单元一旦判死只能等下一个 timer，代价更高。
+Wants=wgd-network-policy-agent.service
+After=wgd-network-policy-agent.service
+StartLimitIntervalSec=0
+StartLimitBurst=0
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/WGDashboard/src
+Environment=PYTHONPATH=/opt/WGDashboard/src
+Environment=CONFIGURATION_PATH=/opt/WGDashboard/src
+UMask=0027
+# 开机时 venv python 建 socket 可能要十几秒，先等它（60s 上限，dash 安全写法：不要 $i/$(seq)）
+ExecStartPre=/bin/sh -ec 'for round in 1 2 3 4 5 6; do for attempt in 1 2 3 4 5 6 7 8 9 10; do test -S /run/wgd-network-policy/agent.sock && exit 0; sleep 1; done; done; exit 1'
+ExecStart=/opt/WGDashboard/src/venv/bin/python3 -m network_policy.reconcile
+TimeoutStartSec=180
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/WGDashboard/src/db
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

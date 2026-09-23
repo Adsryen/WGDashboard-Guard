@@ -4,7 +4,10 @@ from sqlalchemy_utils import database_exists, create_database
 
 def ConnectionString(database) -> str:    
     parser = configparser.ConfigParser(strict=False)
-    parser.read_file(open('wg-dashboard.ini', "r+"))
+    # Read-only: this helper only parses the ini. Opening it "r+" demanded a write
+    # permission the sandboxed side services (ProtectSystem=strict) legitimately lack.
+    with open('wg-dashboard.ini', "r") as ini:
+        parser.read_file(ini)
 
     sqlitePath = os.path.join("db")
     if not os.path.isdir(sqlitePath):

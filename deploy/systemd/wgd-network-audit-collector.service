@@ -2,8 +2,14 @@
 Description=WGDashboard Network Audit Collector
 Documentation=https://github.com/WGDashboard/WGDashboard
 After=network-online.target wgd-network-audit-agent.service
-Wants=network-online.target
-Requires=wgd-network-audit-agent.service
+# 2026-09-23: Requires -> Wants。agent 在开机负载下偶发启动失败时，systemd 会把本服务的
+# start job 直接判成 'dependency' 失败，Restart= 完全不生效，于是采集器一躺就是几十小时
+# （/run/wgd-network-audit/health.json 不再产生 -> 告警器每 30 分钟刷一条「健康快照文件不存在」）。
+# 改 Wants 后 agent 抖动不再连坐，本服务自己等 config.json 就绪。
+Wants=network-online.target wgd-network-audit-agent.service
+# 崩溃循环也不要被启动限速封死（systemd 默认 10s 内 5 次）
+StartLimitIntervalSec=0
+StartLimitBurst=0
 
 [Service]
 Type=simple
@@ -12,9 +18,12 @@ Group=root
 WorkingDirectory=/opt/WGDashboard/src
 Environment=PYTHONPATH=/opt/WGDashboard/src
 UMask=0027
+# agent 还没写出 config.json 时先等最多 60s，等不到再由 Restart 兜底重试
+ExecStartPre=/bin/sh -ec 'for round in 1 2 3 4 5 6; do for attempt in 1 2 3 4 5 6 7 8 9 10; do test -r /run/wgd-network-audit/config.json && exit 0; sleep 1; done; done; exit 1'
 ExecStart=/opt/WGDashboard/src/venv/bin/python3 -m network_audit.collector --config /run/wgd-network-audit/config.json --spool /var/lib/wgd-network-audit/spool.db --health /run/wgd-network-audit/health.json
-Restart=on-failure
-RestartSec=5
+# 主进程即使正常退出也必须回来
+Restart=always
+RestartSec=10
 TimeoutStopSec=15
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
 NoNewPrivileges=yes

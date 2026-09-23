@@ -14,11 +14,20 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 try:
     import sqlalchemy as db
-    from network_policy.service import NetworkPolicyService, NetworkPolicyServiceError
+    from network_policy.reconcile import EXIT_DRIFT, EXIT_FAILED, EXIT_IN_SYNC, reconcile
+    from network_policy.service import (
+        NetworkPolicyService,
+        NetworkPolicyServiceError,
+        desired_fingerprint,
+        runtime_is_in_sync,
+    )
 except ModuleNotFoundError:
     db = None
     NetworkPolicyService = None
     NetworkPolicyServiceError = RuntimeError
+    EXIT_DRIFT = EXIT_FAILED = EXIT_IN_SYNC = None
+    reconcile = None
+    desired_fingerprint = runtime_is_in_sync = None
 
 
 from network_policy.agent_protocol import AgentProtocolError, AgentRequest
@@ -567,6 +576,7 @@ class FakeNftRunner:
     def __init__(self):
         self.calls = []
         self.loaded_hash = None
+        self.loaded_rule_count = 1
 
     def __call__(self, command, input_text):
         self.calls.append((list(command), input_text))
@@ -574,7 +584,10 @@ class FakeNftRunner:
             match = re.search(r"wgd-policy:([a-f0-9]{64})", input_text)
             self.loaded_hash = match.group(1) if match else None
         if command[1:4] == ["list", "table", "inet"]:
-            stdout = f'table inet wgd_network_policy {{ comment "wgd-policy:{self.loaded_hash}" }}' if self.loaded_hash else ""
+            tags = " ".join(
+                f'comment "wgd-policy:{self.loaded_hash}"' for _ in range(self.loaded_rule_count)
+            )
+            stdout = f"table inet wgd_network_policy {{ {tags} }}" if self.loaded_hash else ""
             return CompletedProcess(command, 0 if self.loaded_hash else 1, stdout, "")
         return CompletedProcess(command, 0, "nftables v1.0", "")
 
@@ -595,6 +608,31 @@ class NftablesExecutorTest(unittest.TestCase):
         self.assertTrue(all(command[0] == "nft" for command, _ in runner.calls))
         self.assertFalse(any("shell" in command for command, _ in runner.calls))
 
+    def test_status_counts_the_digest_tagged_rules_in_the_table(self):
+        runner = FakeNftRunner()
+        executor = NftablesExecutor(runner=runner)
+        executor.nft_path = "nft"
+        _, digest = compile_ruleset([validate_policy(policy_payload())])
+        runner.loaded_hash = digest
+        runner.loaded_rule_count = 4
+
+        status = executor.status()
+
+        self.assertTrue(status["table_present"])
+        self.assertEqual(digest, status["ruleset_hash"])
+        self.assertEqual(4, status["rule_count"])
+
+    def test_status_of_an_absent_table_reports_zero_rules(self):
+        runner = FakeNftRunner()
+        executor = NftablesExecutor(runner=runner)
+        executor.nft_path = "nft"
+
+        status = executor.status()
+
+        self.assertFalse(status["table_present"])
+        self.assertEqual(0, status["rule_count"])
+        self.assertIsNone(status["ruleset_hash"])
+
     def test_status_returns_the_loaded_policy_hash(self):
         runner = FakeNftRunner()
         executor = NftablesExecutor(runner=runner)
@@ -611,6 +649,8 @@ class FakePolicyAgent:
         self.fail_status = False
         self.status_hash = None
         self.status_hash_override = None
+        self.status_rule_count = None
+        self.status_table_present = True
         self.requests = []
 
     def request(self, action, policies=None):
@@ -624,7 +664,11 @@ class FakePolicyAgent:
         if action == "capabilities":
             return {"capabilities": {"supported": True}}
         if action == "status":
-            return {"ruleset_hash": self.status_hash_override or self.status_hash}
+            loaded = self.status_hash_override or self.status_hash
+            status = {"ruleset_hash": loaded, "table_present": self.status_table_present}
+            if self.status_rule_count is not None:
+                status["rule_count"] = self.status_rule_count
+            return status
         self.status_hash = policy_hash(policies) if policies else None
         return {"hash": self.status_hash, "applied": True}
 
@@ -711,6 +755,72 @@ class NetworkPolicyServiceTest(unittest.TestCase):
         self.assertEqual(before_revision_count, self._count(self.service.repository.revisions))
         self.assertEqual(before_apply_count, self._count(self.service.repository.applies))
 
+    def test_runtime_check_flags_a_missing_table_without_reapplying(self):
+        self.service.apply(policy_payload(), "test-actor")
+        self.agent.status_hash = None
+        self.agent.status_rule_count = 0
+        self.agent.status_table_present = False
+        self.agent.requests.clear()
+
+        report = self.service.runtime_check()
+
+        self.assertEqual("out_of_sync", report["status"])
+        self.assertFalse(report["table_present"])
+        self.assertEqual(1, report["managed_policies"])
+        self.assertEqual(["status"], [action for action, _ in self.agent.requests])
+
+    def test_runtime_check_accepts_matching_digest_and_rule_count(self):
+        policy = validate_policy(policy_payload())
+        self.service.apply(policy.to_payload(), "test-actor")
+        expected_hash, expected_count = desired_fingerprint([policy])
+        self.assertGreater(expected_count, 0)
+        self.agent.status_hash = expected_hash
+        self.agent.status_rule_count = expected_count
+        self.agent.requests.clear()
+
+        report = self.service.runtime_check()
+
+        self.assertEqual("in_sync", report["status"])
+        self.assertEqual(expected_count, report["loaded_rule_count"])
+        self.assertEqual(["status"], [action for action, _ in self.agent.requests])
+
+    def test_runtime_check_detects_a_partially_deleted_table(self):
+        policy = validate_policy(policy_payload())
+        self.service.apply(policy.to_payload(), "test-actor")
+        expected_hash, expected_count = desired_fingerprint([policy])
+        self.agent.status_hash = expected_hash
+        self.agent.status_rule_count = expected_count - 1
+
+        self.assertEqual("out_of_sync", self.service.runtime_check()["status"])
+        self.assertFalse(runtime_is_in_sync(
+            {"table_present": True, "ruleset_hash": expected_hash, "rule_count": expected_count - 1},
+            expected_hash,
+            expected_count,
+        ))
+
+    def test_non_forced_sync_short_circuits_when_the_runtime_already_matches(self):
+        policy = validate_policy(policy_payload())
+        self.service.apply(policy.to_payload(), "test-actor")
+        expected_hash, expected_count = desired_fingerprint([policy])
+        self.agent.status_hash = expected_hash
+        self.agent.status_rule_count = expected_count
+        self.agent.requests.clear()
+
+        result = self.service.synchronize_runtime(force=False)
+
+        self.assertEqual("in_sync", result["status"])
+        self.assertFalse(result["applied"])
+        self.assertEqual(["status"], [action for action, _ in self.agent.requests])
+
+    def test_non_forced_sync_still_applies_when_the_agent_cannot_prove_rule_count(self):
+        self.service.apply(policy_payload(), "test-actor")
+        self.agent.requests.clear()
+
+        result = self.service.synchronize_runtime(force=False)
+
+        self.assertEqual(["status", "apply", "status"], [action for action, _ in self.agent.requests])
+        self.assertTrue(result["applied"])
+
     def test_runtime_sync_maps_apply_and_status_failures_without_database_mutation(self):
         self.service.apply(policy_payload(), "test-actor")
         before_records = self.service.repository.current_records()
@@ -742,6 +852,41 @@ class NetworkPolicyServiceTest(unittest.TestCase):
     def _count(self, table):
         with self.engine.connect() as connection:
             return connection.scalar(db.select(db.func.count()).select_from(table))
+
+
+class FakeReconcileService:
+    def __init__(self, check_status="in_sync", sync_status="in_sync"):
+        self.check_status = check_status
+        self.sync_status = sync_status
+        self.calls = []
+
+    def runtime_check(self):
+        self.calls.append("runtime_check")
+        return {"status": self.check_status}
+
+    def synchronize_runtime(self, force=True):
+        self.calls.append(("synchronize_runtime", force))
+        return {"status": self.sync_status, "applied": force}
+
+
+class NetworkPolicyReconcileTest(unittest.TestCase):
+    def test_check_only_never_mutates_and_exits_two_on_drift(self):
+        service = FakeReconcileService(check_status="out_of_sync")
+
+        report, exit_code = reconcile(service, check_only=True)
+
+        self.assertEqual(["runtime_check"], service.calls)
+        self.assertEqual("out_of_sync", report["status"])
+        self.assertEqual(EXIT_DRIFT, exit_code)
+
+    def test_reconcile_uses_the_idempotent_path_and_exits_zero(self):
+        service = FakeReconcileService()
+
+        report, exit_code = reconcile(service, check_only=False)
+
+        self.assertEqual([("synchronize_runtime", False)], service.calls)
+        self.assertEqual("in_sync", report["status"])
+        self.assertEqual(EXIT_IN_SYNC, exit_code)
 
 
 if __name__ == "__main__":

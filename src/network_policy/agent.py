@@ -18,7 +18,13 @@ import subprocess
 from typing import Callable, Sequence
 
 from .agent_protocol import AgentProtocolError, AgentRequest, MAX_MESSAGE_BYTES, decode_message, encode_message
-from .compiler import TABLE_FAMILY, TABLE_NAME, compile_check_ruleset, compile_ruleset
+from .compiler import (
+    RULE_TAG_PREFIX,
+    TABLE_FAMILY,
+    TABLE_NAME,
+    compile_check_ruleset,
+    compile_ruleset,
+)
 
 try:
     import grp
@@ -126,19 +132,31 @@ class NftablesExecutor:
     def status(self) -> dict:
         capabilities = self.capabilities()
         if not capabilities.supported:
-            return {"capabilities": capabilities.to_payload(), "table_present": False}
+            return {"capabilities": capabilities.to_payload(), "table_present": False, "rule_count": 0}
         try:
             result = self.runner([self.nft_path, "list", "table", TABLE_FAMILY, TABLE_NAME], None)
         except (OSError, subprocess.TimeoutExpired) as error:
-            return {"capabilities": capabilities.to_payload(), "table_present": False, "message": str(error)}
+            return {
+                "capabilities": capabilities.to_payload(),
+                "table_present": False,
+                "rule_count": 0,
+                "message": str(error),
+            }
         loaded_hash = None
+        rule_count = 0
         if result.returncode == 0:
             match = re.search(r'wgd-policy:([a-f0-9]{64})', result.stdout)
-            loaded_hash = match.group(1) if match else None
+            if match:
+                loaded_hash = match.group(1)
+                # Every published rule carries exactly one digest comment, so the number of
+                # occurrences is the number of rules still present. A hash alone cannot see
+                # somebody deleting part of the table.
+                rule_count = result.stdout.count(f"{RULE_TAG_PREFIX}{loaded_hash}")
         return {
             "capabilities": capabilities.to_payload(),
             "table_present": result.returncode == 0,
             "ruleset_hash": loaded_hash,
+            "rule_count": rule_count,
         }
 
 

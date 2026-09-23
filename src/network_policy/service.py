@@ -5,15 +5,44 @@ from __future__ import annotations
 import hashlib
 import os
 import socket
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 from .agent_protocol import AgentProtocolError, AgentRequest, MAX_MESSAGE_BYTES, decode_message, encode_message
-from .compiler import policy_hash
+from .compiler import RULE_TAG_PREFIX, compile_ruleset, policy_hash
 from .models import NetworkPolicyRepository
 from .validation import NetworkPolicy, PolicyValidationError, validate_policy
 
 
 DEFAULT_SOCKET_PATH = "/run/wgd-network-policy/agent.sock"
+
+
+def desired_fingerprint(policies: Sequence[NetworkPolicy]) -> tuple[str, int]:
+    """Return the digest the Agent must have loaded and how many tagged rules that implies."""
+    body, expected_hash = compile_ruleset(policies)
+    return expected_hash, body.count(f"{RULE_TAG_PREFIX}{expected_hash}")
+
+
+def runtime_is_in_sync(
+    status: Mapping[str, Any] | None,
+    expected_hash: str,
+    expected_rule_count: int,
+) -> bool:
+    """Whether the Agent-reported table already equals the desired ruleset.
+
+    An Agent that predates ``rule_count`` cannot prove the table is intact (a partial
+    ``nft delete rule`` keeps the surviving rules' digest comment), so it is treated as
+    drifted and reconciled the expensive way.
+    """
+    if not status or not status.get("table_present"):
+        return False
+    loaded_count = status.get("rule_count")
+    if not isinstance(loaded_count, int) or loaded_count != expected_rule_count:
+        return False
+    loaded_hash = status.get("ruleset_hash")
+    if expected_rule_count == 0:
+        # An empty desired set leaves no digest comment behind; presence alone is the proof.
+        return loaded_hash in (None, expected_hash)
+    return loaded_hash == expected_hash
 
 
 class NetworkPolicyServiceError(RuntimeError):
@@ -95,10 +124,50 @@ class NetworkPolicyService:
             ),
         )
 
-    def synchronize_runtime(self) -> dict[str, Any]:
-        """Apply the complete persisted policy set and verify the loaded Agent hash."""
+    def runtime_check(self) -> dict[str, Any]:
+        """Compare the loaded runtime with the persisted desired set without mutating anything."""
         desired = self._active_bound_policies()
-        expected_hash = policy_hash(desired)
+        expected_hash, expected_rule_count = desired_fingerprint(desired)
+        try:
+            status = self.agent_client.request("status")
+        except (NetworkPolicyServiceError, PolicyValidationError, ValueError) as error:
+            raise NetworkPolicyServiceError(str(error)) from error
+        return {
+            "status": (
+                "in_sync"
+                if runtime_is_in_sync(status, expected_hash, expected_rule_count)
+                else "out_of_sync"
+            ),
+            "managed_policies": len(desired),
+            "expected_hash": expected_hash,
+            "expected_rule_count": expected_rule_count,
+            "loaded_hash": status.get("ruleset_hash"),
+            "loaded_rule_count": status.get("rule_count"),
+            "table_present": bool(status.get("table_present")),
+        }
+
+    def synchronize_runtime(self, force: bool = True) -> dict[str, Any]:
+        """Apply the complete persisted policy set and verify the loaded Agent hash.
+
+        ``force=False`` first asks the Agent whether the kernel already holds the exact
+        desired ruleset and returns without touching nftables when it does. That is what
+        lets the boot/timer reconciler run every few minutes for free instead of
+        flushing and republishing the table on every pass.
+        """
+        desired = self._active_bound_policies()
+        expected_hash, expected_rule_count = desired_fingerprint(desired)
+        if not force:
+            try:
+                probe = self.agent_client.request("status")
+            except (NetworkPolicyServiceError, PolicyValidationError, ValueError) as error:
+                raise NetworkPolicyServiceError(str(error)) from error
+            if runtime_is_in_sync(probe, expected_hash, expected_rule_count):
+                return {
+                    "status": "in_sync",
+                    "applied": False,
+                    "expected_hash": expected_hash,
+                    "loaded_hash": probe.get("ruleset_hash"),
+                }
         try:
             agent_result = self.agent_client.request("apply", desired)
             status = self.agent_client.request("status")
@@ -116,7 +185,9 @@ class NetworkPolicyService:
             )
         return {
             "status": "in_sync",
+            "applied": bool(agent_result.get("applied", True)),
             "expected_hash": expected_hash,
+            "expected_rule_count": expected_rule_count,
             "loaded_hash": loaded_hash,
             "agent": agent_result,
         }

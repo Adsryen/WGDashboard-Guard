@@ -1,0 +1,15 @@
+[Unit]
+Description=Reconcile WGDashboard network policy runtime against persisted state
+Documentation=https://github.com/WGDashboard/WGDashboard
+
+[Timer]
+# 开机 15s 后补一次（覆盖 wg-dashboard 还没起来的情况），之后每 5 分钟查一次漂移。
+# nftables 表是易失的：不重放就是静默 fail-open，所以这里要的是"迟早补上"而不是"绝不重复"。
+OnBootSec=15s
+OnUnitActiveSec=5min
+AccuracySec=1min
+RandomizedDelaySec=10s
+Unit=wgd-network-policy-reconcile.service
+
+[Install]
+WantedBy=timers.target

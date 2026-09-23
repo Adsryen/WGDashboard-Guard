@@ -18,12 +18,17 @@ The initial provider requires nftables and a Linux host. Install the Dashboard a
 sudo groupadd --system wgdpolicy
 sudo install -D -m 0644 deploy/systemd/wgd-network-policy-agent.service /etc/systemd/system/wgd-network-policy-agent.service
 sudo install -D -m 0644 deploy/systemd/wgd-network-policy-denial.service /etc/systemd/system/wgd-network-policy-denial.service
+sudo install -D -m 0644 deploy/systemd/wgd-network-policy-reconcile.service /etc/systemd/system/wgd-network-policy-reconcile.service
+sudo install -D -m 0644 deploy/systemd/wgd-network-policy-reconcile.timer /etc/systemd/system/wgd-network-policy-reconcile.timer
 sudo install -D -m 0644 deploy/systemd/tmpfiles.d/wgd-network-policy-agent.conf /etc/tmpfiles.d/wgd-network-policy-agent.conf
 sudo systemd-tmpfiles --create /etc/tmpfiles.d/wgd-network-policy-agent.conf
 sudo systemctl daemon-reload
 sudo systemctl enable --now wgd-network-policy-agent.service
 sudo systemctl enable --now wgd-network-policy-denial.service
+sudo systemctl enable --now wgd-network-policy-reconcile.timer
 ```
+
+The reconcile timer is not optional on a host that reboots: see Failure and recovery.
 
 If WGDashboard does not run as root, add its service account to `wgdpolicy`, then restart that service so it receives the new group membership:
 
@@ -60,16 +65,37 @@ The following policy is represented by five allow rules plus one default drop fo
 
 ## Failure and recovery
 
+The ruleset lives in the kernel, so `inet wgd_network_policy` is volatile: a reboot,
+`nft flush ruleset`, or any external tool that rewrites the ruleset removes it while the
+Dashboard database still marks those Peers as managed. Managed forwarding then falls back
+to the gateway's permissive `iifname "wg0" accept`, and the audit collector stops receiving
+policy verdicts. That combination is a silent fail-open, which is why the table is
+republished automatically rather than waiting for a human to press sync.
+
+- `wgd-network-policy-reconcile.timer` runs `python3 -m network_policy.reconcile` 15s after
+  boot and every 5 minutes afterwards. It compares the Agent-reported digest and tagged-rule
+  count with the persisted desired set and re-publishes only when they differ, so an
+  in-sync host costs one `nft list` per pass (`"applied": false`).
+- Use `--check-only` as a monitoring probe. It never touches nftables and exits `0` in sync,
+  `2` on drift, `1` on failure, printing one JSON line with `expected_hash`,
+  `loaded_hash`, `expected_rule_count` and `loaded_rule_count`.
+- Alerting must not depend on the services it watches: watch this probe from outside the
+  Dashboard host's own alert path.
 - A failed check or apply leaves the previously loaded table and the previous active policy intact. The failed candidate is recorded in policy history.
 - Before a managed Peer is deleted or its single-host `AllowedIPs` changes, its existing allow rules are replaced with a default drop. This prevents a later Peer reusing the old tunnel address from inheriting access. The policy is retained as an orphaned audit record and must be explicitly configured again for the new binding.
 - Use the history restore button to reapply a prior revision.
-- For an emergency return to the host's pre-feature forwarding behavior, stop the Agent and delete only the owned table:
+- For an emergency return to the host's pre-feature forwarding behavior, stop the reconciler
+  first — otherwise the timer republishes the table within one pass — then stop the Agent and
+  delete only the owned table:
 
 ```bash
+sudo systemctl disable --now wgd-network-policy-reconcile.timer
 sudo systemctl stop wgd-network-policy-agent.service
 sudo systemctl stop wgd-network-policy-denial.service
 sudo nft delete table inet wgd_network_policy
 ```
+
+Re-enable it once the incident is closed: `sudo systemctl enable --now wgd-network-policy-reconcile.timer`.
 
 Do not run `nft flush ruleset`, and do not delete Docker or 1Panel tables/chains.
 

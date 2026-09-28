@@ -22,6 +22,11 @@ DEFAULT_AUDIT_DATABASE_PATH = "db/wgdashboard_audit.db"
 DEFAULT_HEALTH_SNAPSHOT_PATH = "/run/wgd-network-audit/health.json"
 DEFAULT_POLL_INTERVAL_SECONDS = 60
 DEFAULT_HEALTH_TIMEOUT = timedelta(minutes=5)
+# `write_failures` is a monotonic counter that only resets when the collector restarts, so a
+# bare "> 0" test re-announces a fault that already recovered forever. Storage alerts therefore
+# require a failure timestamp inside this window (2026-09-28: seven identical emails for two
+# transient failures four hours earlier).
+DEFAULT_STORAGE_WRITE_RECENCY = timedelta(minutes=5)
 ALERT_WINDOW = timedelta(minutes=5)
 MAX_ERROR_SUMMARY_LENGTH = 512
 MAX_POLL_INTERVAL_SECONDS = 3600
@@ -230,14 +235,41 @@ def create_email_sender(path: str | os.PathLike[str] | None = None) -> AlertMail
     return EmailSender(_ConfigFileAdapter(parser))
 
 
+def storage_write_detail(snapshot: Any) -> str:
+    """Describe storage failures honestly: cumulative count plus when the last one happened."""
+    if snapshot.last_write_failure_at is None:
+        return "collector audit storage writes are failing"
+    return (
+        f"collector audit storage writes are failing "
+        f"(last_failure_at={_isoformat(snapshot.last_write_failure_at)}; "
+        f"cumulative_since_start={snapshot.write_failures})"
+    )
+
+
+def storage_write_is_current(snapshot: Any, now: datetime, recency: timedelta) -> bool:
+    """Decide whether counted write failures describe the present, not the latched past.
+
+    Snapshots written by an older collector carry no timestamp; falling back to the live
+    status keeps the alert from going silent while also keeping it from re-firing forever.
+    """
+    if snapshot.write_failures <= 0:
+        return False
+    if snapshot.last_write_failure_at is not None:
+        return _as_utc(now) - _as_utc(snapshot.last_write_failure_at) <= recency
+    return snapshot.status in {HealthStatus.DEGRADED, HealthStatus.FAILED}
+
+
 def evaluate_health_snapshot(
     path: str | os.PathLike[str],
     *,
     now: datetime | None = None,
     timeout: timedelta = DEFAULT_HEALTH_TIMEOUT,
+    storage_recency: timedelta = DEFAULT_STORAGE_WRITE_RECENCY,
 ) -> list[AlertEvent]:
     if not isinstance(timeout, timedelta) or timeout <= timedelta(0):
         raise ValueError("timeout must be a positive timedelta")
+    if not isinstance(storage_recency, timedelta) or storage_recency <= timedelta(0):
+        raise ValueError("storage_recency must be a positive timedelta")
     current_time = normalize_utc(now or datetime.now(timezone.utc), "now")
     snapshot_path = Path(path)
     try:
@@ -258,10 +290,10 @@ def evaluate_health_snapshot(
         events.append(AlertEvent("collector_health", "collector_health", 1, None, detail=detail))
     elif snapshot.config_sync_status == ConfigSyncStatus.FAILED:
         events.append(AlertEvent("collector_health", "collector_health", 1, None, detail="collector configuration synchronization failed"))
-    if snapshot.write_failures > 0:
+    if storage_write_is_current(snapshot, current_time, storage_recency):
         events.append(AlertEvent(
             "storage_write", "storage_write", snapshot.write_failures, None,
-            detail="collector audit storage writes are failing",
+            detail=storage_write_detail(snapshot),
         ))
     return events
 
@@ -416,13 +448,47 @@ def bounded_error(error: object, maximum: int = MAX_ERROR_SUMMARY_LENGTH) -> str
     return value[:maximum]
 
 
+def _as_utc(value: datetime) -> datetime:
+    """Anchor a timestamp to UTC, treating naive values as UTC instead of as local time."""
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _isoformat(value: datetime | None) -> str | None:
+    """Match the health snapshot payload representation so details stay machine-parseable."""
+    if value is None:
+        return None
+    return _as_utc(value).isoformat()
+
+
+def _utc_text(value: str) -> str:
+    """Render an ISO timestamp for operators; keep the raw text if it cannot be parsed."""
+    try:
+        parsed = normalize_utc(value, "last_failure_at")
+    except AuditValidationError:
+        return value
+    return f"{parsed.strftime('%Y-%m-%d %H:%M:%S')} UTC"
+
+
 def _alert_subject(event: AlertEvent) -> str:
     return f"[WGDashboard] 网络审计告警：{_ALERT_TYPE_LABELS.get(event.alert_type, event.alert_type)}"
+
+
+_STORAGE_WRITE_DETAIL = re.compile(
+    r"collector audit storage writes are failing \(last_failure_at=(\S+); cumulative_since_start=(\d+)\)"
+)
 
 
 def _alert_detail(detail: str) -> str:
     if detail in _ALERT_DETAIL_LABELS:
         return _ALERT_DETAIL_LABELS[detail]
+    storage_match = _STORAGE_WRITE_DETAIL.fullmatch(detail)
+    if storage_match:
+        return (
+            f"采集器审计存储写入失败，最近一次 {_utc_text(storage_match.group(1))}，"
+            f"自采集器启动累计 {storage_match.group(2)} 次"
+        )
     status_match = re.fullmatch(r"collector status is (\w+)(?: \((.+)\))?", detail)
     if status_match:
         status_labels = {"degraded": "降级", "failed": "失败", "healthy": "健康"}

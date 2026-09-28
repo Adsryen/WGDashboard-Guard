@@ -288,6 +288,83 @@ class CollectorHealthTest(unittest.TestCase):
                 self.assertEqual(snapshot, read_health_snapshot(health_path))
                 self.assertEqual(1, snapshot.spool_records)
                 self.assertEqual(1, snapshot.write_failures)
+                self.assertEqual(BASE_TIME + timedelta(seconds=5), snapshot.last_write_failure_at)
+            finally:
+                spool.close()
+
+    def failing_collector(self, spool, **overrides):
+        payload = {
+            "retry_delay": timedelta(seconds=1),
+            "now": BASE_TIME,
+        }
+        payload.update(overrides)
+        return AuditCollector(
+            audit_config(),
+            spool,
+            lambda item: (_ for _ in ()).throw(RuntimeError("database unavailable")),
+            **payload,
+        )
+
+    def prime_one_failing_observation(self, collector):
+        connection = flow()
+        collector.handle_conntrack(ConntrackEvent("new", connection, BASE_TIME))
+        collector.handle_nflog(NflogEvent(connection, "policy_allowed", BASE_TIME))
+        collector.expire(BASE_TIME + timedelta(seconds=5))
+
+    def test_repeated_write_failures_refresh_the_timestamp_and_accumulate_the_counter(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            spool = AuditSpool(pathlib.Path(temporary_directory) / "spool.db")
+            try:
+                collector = self.failing_collector(spool)
+                self.prime_one_failing_observation(collector)
+
+                collector.flush(BASE_TIME + timedelta(seconds=5))
+                self.assertEqual(1, collector.write_failures)
+                self.assertEqual(BASE_TIME + timedelta(seconds=5), collector.last_write_failure_at)
+
+                collector.flush(BASE_TIME + timedelta(seconds=10))
+                self.assertEqual(2, collector.write_failures)
+                self.assertEqual(BASE_TIME + timedelta(seconds=10), collector.last_write_failure_at)
+            finally:
+                spool.close()
+
+    def test_recovered_writes_keep_the_counter_and_the_failure_timestamp_latched(self):
+        # Recovery must not erase the evidence: the counter stays monotonic and the timestamp
+        # stays at the last real failure. Alerts distinguish present from past on the timestamp.
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            spool = AuditSpool(pathlib.Path(temporary_directory) / "spool.db")
+            try:
+                collector = self.failing_collector(spool)
+                self.prime_one_failing_observation(collector)
+                collector.flush(BASE_TIME + timedelta(seconds=5))
+
+                collector.writer = lambda item: None
+                collector.flush(BASE_TIME + timedelta(seconds=10))
+                snapshot = collector.health_snapshot()
+
+                self.assertEqual(1, snapshot.write_failures)
+                self.assertEqual(BASE_TIME + timedelta(seconds=5), snapshot.last_write_failure_at)
+                self.assertEqual(HealthStatus.HEALTHY, snapshot.status)
+                self.assertEqual(0, snapshot.spool_records)
+            finally:
+                spool.close()
+
+    def test_write_health_publishes_the_failure_timestamp_through_the_snapshot_file(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            spool = AuditSpool(pathlib.Path(temporary_directory) / "spool.db")
+            health_path = pathlib.Path(temporary_directory) / "health.json"
+            try:
+                collector = self.failing_collector(spool, health_path=health_path)
+                self.prime_one_failing_observation(collector)
+                collector.flush(BASE_TIME + timedelta(seconds=5))
+                collector.write_health()
+
+                stored = json.loads(health_path.read_text(encoding="utf-8"))
+                self.assertEqual((BASE_TIME + timedelta(seconds=5)).isoformat(), stored["last_write_failure_at"])
+                self.assertEqual(
+                    BASE_TIME + timedelta(seconds=5),
+                    read_health_snapshot(health_path).last_write_failure_at,
+                )
             finally:
                 spool.close()
 
@@ -356,6 +433,44 @@ class HealthSnapshotNetlinkOverrunsTest(unittest.TestCase):
 
         with self.assertRaises(AuditValidationError):
             HealthSnapshot.from_payload({**payload, "raw_packet": "secret"})
+
+
+class HealthSnapshotWriteFailureTest(unittest.TestCase):
+    def test_new_field_round_trips_through_payload(self):
+        failed_at = BASE_TIME + timedelta(seconds=5)
+        snapshot = HealthSnapshot(
+            HealthStatus.DEGRADED, BASE_TIME,
+            write_failures=7, last_write_failure_at=failed_at, last_error="audit database unavailable",
+        )
+
+        payload = snapshot.to_payload()
+
+        self.assertEqual(failed_at.isoformat(), payload["last_write_failure_at"])
+        self.assertEqual(snapshot, HealthSnapshot.from_payload(payload))
+
+    def test_old_format_payload_without_new_field_reads_none(self):
+        payload = HealthSnapshot(HealthStatus.HEALTHY, BASE_TIME, write_failures=9).to_payload()
+        del payload["last_write_failure_at"]
+
+        snapshot = HealthSnapshot.from_payload(payload)
+
+        self.assertIsNone(snapshot.last_write_failure_at)
+        self.assertEqual(9, snapshot.write_failures)
+
+    def test_a_null_timestamp_is_valid(self):
+        snapshot = HealthSnapshot.from_payload(
+            {**HealthSnapshot(HealthStatus.HEALTHY, BASE_TIME).to_payload(), "last_write_failure_at": None}
+        )
+
+        self.assertIsNone(snapshot.last_write_failure_at)
+
+    def test_naive_and_non_iso_timestamps_are_rejected(self):
+        with self.assertRaises(AuditValidationError):
+            HealthSnapshot(HealthStatus.HEALTHY, BASE_TIME, last_write_failure_at=BASE_TIME.replace(tzinfo=None))
+        with self.assertRaises(AuditValidationError):
+            HealthSnapshot.from_payload(
+                {**HealthSnapshot(HealthStatus.HEALTHY, BASE_TIME).to_payload(), "last_write_failure_at": "yesterday"}
+            )
 
 
 class AdapterCapabilityTest(unittest.TestCase):

@@ -455,6 +455,7 @@ class AuditCollector:
         self.netlink_overruns = 0
         self._last_netlink_overruns = 0
         self.write_failures = 0
+        self.last_write_failure_at: datetime | None = None
         self.last_error: str | None = None
         self.status = HealthStatus.STARTING
 
@@ -483,6 +484,9 @@ class AuditCollector:
             except Exception:
                 self.spool.retry(item.item_id, current_time + self.retry_delay)
                 self.write_failures += 1
+                # Monotonic since-start counter: the timestamp is what makes "failing now"
+                # distinguishable from "failed once, long ago" for every reader of the snapshot.
+                self.last_write_failure_at = current_time
                 self.last_error = "audit database unavailable"
                 self.status = HealthStatus.DEGRADED
                 break
@@ -543,6 +547,7 @@ class AuditCollector:
             incomplete_flows=self.correlator.stats.incomplete_flows,
             netlink_overruns=self.netlink_overruns,
             write_failures=self.write_failures,
+            last_write_failure_at=self.last_write_failure_at,
             last_error=last_error,
             config_generation=self.config.generation,
             config_sync_status=sync_status["status"],

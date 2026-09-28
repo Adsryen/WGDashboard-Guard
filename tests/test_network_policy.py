@@ -180,6 +180,15 @@ class NetworkPolicyValidationTest(unittest.TestCase):
                 "ports": {"from": 8, "to": 8},
             }]))
 
+    def test_unmanaged_policies_cannot_carry_rules(self):
+        # The UI sends managed=false together with an emptied rule set when the
+        # operator turns forwarded access control off. Rules surviving that
+        # switch would silently keep the Peer restricted, so the API refuses it.
+        with self.assertRaisesRegex(PolicyValidationError, "unmanaged policies cannot contain rules"):
+            validate_policy(policy_payload(managed=False))
+
+        self.assertEqual((), validate_policy(policy_payload(managed=False, rules=[])).rules)
+
 
 class NetworkPolicyLocaleTest(unittest.TestCase):
     def test_chinese_translates_every_network_policy_ui_key(self):
@@ -706,6 +715,29 @@ class NetworkPolicyServiceTest(unittest.TestCase):
         action, policies = self.agent.requests[-1]
         self.assertEqual("apply", action)
         self.assertEqual([], policies)
+
+    def test_saving_an_unmanaged_policy_clears_the_peer_from_the_desired_state(self):
+        # deactivate() is only a wrapper around apply(managed=false); the modal
+        # save path talks to apply() directly, so both must converge on the same
+        # agent payload: the target Peer leaves the desired set and every other
+        # managed Peer is re-sent untouched.
+        original = policy_payload()
+        other = policy_payload(
+            configuration_name="wg1",
+            interface_name="wg1",
+            peer_public_key="b" * 43 + "=",
+            tunnel_address="10.9.0.2",
+        )
+        self.service.apply(original, "test-actor")
+        self.service.apply(other, "test-actor")
+
+        result = self.service.apply(policy_payload(managed=False, rules=[]), "test-actor")
+
+        action, desired = self.agent.requests[-1]
+        self.assertEqual("apply", action)
+        self.assertEqual([other["peer_public_key"]], [policy.peer_public_key for policy in desired])
+        self.assertIs(False, result["policy"]["managed"])
+        self.assertEqual([], result["policy"]["rules"])
 
     def test_details_include_the_policy_snapshot_for_each_revision(self):
         original = policy_payload(rules=[{

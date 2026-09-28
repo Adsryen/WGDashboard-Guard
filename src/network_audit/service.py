@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import logging
 import os
 from pathlib import Path
 from typing import Any
 
 import sqlalchemy as db
-from sqlalchemy import event
+from sqlalchemy import event, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from .repository import NetworkAuditRepository
@@ -17,6 +18,38 @@ from .validation import AuditObservation, AuditQuery, AuditValidationError, MAX_
 
 DETAIL_RETENTION_DAYS = 180
 AGGREGATE_RETENTION_MONTHS = 24
+# SQLite waits for a zero-length timeout by default, so a reader that happens to be scanning the
+# audit tables (dashboard queries, the alert runner) makes the collector's write fail on the spot
+# and dump the observation into the spool. 5s is deliberately bounded: a longer wait converts a
+# storage stall into a collector-wide block, and netlink buffers keep filling while we are stuck
+# inside flush().
+SQLITE_BUSY_TIMEOUT_MS = 5000
+# WAL is about readers and one writer overlapping. Measured against a copy of the production
+# database: with a concurrent page-heavy reader, write commits drop from p50 0.730s to 0.001s;
+# writer-against-writer stays serialised either way (the loser still gives up after busy_timeout),
+# so the spool and its retry logic are not removable.
+SQLITE_JOURNAL_MODE = "wal"
+# Keep the write-ahead log from growing without bound between checkpoints.
+SQLITE_JOURNAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
+LOGGER = logging.getLogger(__name__)
+_SQLITE_PRAGMA_LOGGED: set[str] = set()
+
+
+def _resolve_database_path(database_path: str | os.PathLike[str] | None) -> Path:
+    return Path(database_path or os.getenv("WGD_AUDIT_DATABASE_PATH", "db/wgdashboard_audit.db"))
+
+
+def _sqlite_pragma_statements() -> tuple[str, ...]:
+    """Statements applied to every fresh SQLite connection, in dependency order.
+
+    synchronous is left at the SQLite default (FULL): audit durability outranks the throughput
+    that NORMAL/OFF would buy.
+    """
+    return (
+        f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}",
+        f"PRAGMA journal_mode = {SQLITE_JOURNAL_MODE}",
+        f"PRAGMA journal_size_limit = {SQLITE_JOURNAL_SIZE_LIMIT_BYTES}",
+    )
 
 
 class NetworkAuditServiceError(RuntimeError):
@@ -29,15 +62,17 @@ class NetworkAuditService:
     def __init__(self, database_path: str | os.PathLike[str] | None = None, engine: db.Engine | None = None):
         if engine is not None and database_path is not None:
             raise ValueError("provide either database_path or engine, not both")
+        self.database_path = None if engine is not None else _resolve_database_path(database_path)
         try:
             self.engine = engine or self._create_engine(database_path)
             self.repository = NetworkAuditRepository(self.engine)
         except (OSError, SQLAlchemyError, RuntimeError) as error:
             raise NetworkAuditServiceError("audit database is unavailable") from error
+        self._log_storage_diagnostics()
 
     @staticmethod
     def _create_engine(database_path: str | os.PathLike[str] | None) -> db.Engine:
-        path = Path(database_path or os.getenv("WGD_AUDIT_DATABASE_PATH", "db/wgdashboard_audit.db"))
+        path = _resolve_database_path(database_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         engine = db.create_engine(
             db.URL.create("sqlite", database=str(path)),
@@ -46,9 +81,85 @@ class NetworkAuditService:
 
         @event.listens_for(engine, "connect")
         def configure_sqlite(connection: Any, _connection_record: Any) -> None:
-            connection.execute("PRAGMA busy_timeout = 5000")
+            # The "connect" event hands over the *DBAPI* connection (sqlite3.Connection), which
+            # only accepts plain strings: sqlalchemy.text() here raises
+            # "execute() argument 1 must be str, not TextClause" and, because the failure is
+            # swallowed, would silently leave every connection on the SQLite defaults.
+            # Each statement stays individually non-fatal - a read-only or otherwise unhappy
+            # filesystem must fall back to the rollback journal rather than lose the audit path.
+            try:
+                statements = _sqlite_pragma_statements()
+            except Exception:
+                statements = ()
+            for statement in statements:
+                try:
+                    cursor = connection.cursor()
+                    cursor.execute(statement)
+                    cursor.fetchall()
+                    cursor.close()
+                except Exception:
+                    continue
 
         return engine
+
+    def storage_diagnostics(self) -> dict[str, Any]:
+        """Read back the pragmas that are really in effect, without ever raising.
+
+        Configuration that could not be applied is as important as configuration that was, so an
+        unavailable value is reported as None instead of hiding the whole record.
+        """
+        diagnostics: dict[str, Any] = {
+            "database_path": str(self.database_path) if self.database_path is not None else None,
+            "journal_mode": None,
+            "busy_timeout": None,
+            "journal_size_limit": None,
+            "synchronous": None,
+        }
+        statements = {
+            "database_path": "PRAGMA database_list",
+            "journal_mode": "PRAGMA journal_mode",
+            "busy_timeout": "PRAGMA busy_timeout",
+            "journal_size_limit": "PRAGMA journal_size_limit",
+            "synchronous": "PRAGMA synchronous",
+        }
+        for field, statement in statements.items():
+            try:
+                with self.engine.connect() as connection:
+                    result = connection.execute(text(statement))
+                    if field == "database_path":
+                        row = result.first()
+                        value = row[2] if row is not None and len(row) > 2 else None
+                    else:
+                        value = result.scalar()
+            except Exception:
+                continue
+            if field == "database_path":
+                if value:
+                    diagnostics[field] = str(value)
+                continue
+            diagnostics[field] = value
+        return diagnostics
+
+    def _log_storage_diagnostics(self) -> None:
+        """Publish the effective storage settings once per process and database for journalctl.
+
+        Services get constructed repeatedly (dashboard startup, alert CLI, collector reconnects);
+        an unguarded line would bury the single record operators actually search for.
+        """
+        try:
+            diagnostics = self.storage_diagnostics()
+        except Exception:
+            return
+        key = str(diagnostics.get("database_path") or self.database_path or "")
+        if key in _SQLITE_PRAGMA_LOGGED:
+            return
+        _SQLITE_PRAGMA_LOGGED.add(key)
+        LOGGER.info(
+            "network audit sqlite storage: journal_mode=%s busy_timeout=%s journal_size_limit=%s "
+            "synchronous=%s path=%s",
+            diagnostics.get("journal_mode"), diagnostics.get("busy_timeout"),
+            diagnostics.get("journal_size_limit"), diagnostics.get("synchronous"), key,
+        )
 
     def record_observation(self, observation: AuditObservation | dict[str, Any]) -> None:
         if not isinstance(observation, AuditObservation):

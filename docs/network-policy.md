@@ -84,6 +84,12 @@ republished automatically rather than waiting for a human to press sync.
 - A failed check or apply leaves the previously loaded table and the previous active policy intact. The failed candidate is recorded in policy history.
 - Before a managed Peer is deleted or its single-host `AllowedIPs` changes, its existing allow rules are replaced with a default drop. This prevents a later Peer reusing the old tunnel address from inheriting access. The policy is retained as an orphaned audit record and must be explicitly configured again for the new binding.
 - Use the history restore button to reapply a prior revision.
+- Turning **Enable forwarded access control** off is a saveable change by itself. The modal sends
+  `managed: false` with an empty rule set through the same `apply()` path that
+  `deactivate()` wraps, and `validate_policy()` rejects rules alongside `managed: false`
+  ("unmanaged policies cannot contain rules"), so the Peer simply leaves the desired set while
+  every other managed Peer is republished unchanged. The Review step stays reachable with the
+  switch off — the off transition has to be applicable, not only reversible.
 - For an emergency return to the host's pre-feature forwarding behavior, stop the reconciler
   first — otherwise the timer republishes the table within one pass — then stop the Agent and
   delete only the owned table:

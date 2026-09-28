@@ -15,12 +15,15 @@ try:
         AlertConfigurationError,
         AlertEvent,
         NetworkAuditAlertRunner,
+        DEFAULT_STORAGE_WRITE_RECENCY,
         _alert_body,
         _alert_detail,
         _alert_subject,
         bounded_error,
         evaluate_health_snapshot,
         load_alert_configuration,
+        storage_write_detail,
+        storage_write_is_current,
     )
     from network_audit.health import HealthSnapshot, HealthStatus, write_health_snapshot
     from network_audit.service import NetworkAuditService
@@ -77,6 +80,12 @@ class NetworkAuditAlertCoreTest(unittest.TestCase):
     def tearDown(self):
         self.service.engine.dispose()
         self.temporary_directory.cleanup()
+
+    def write_fresh(self, snapshot):
+        """Publish a snapshot and backdate its mtime to BASE_TIME so staleness never interferes."""
+        write_health_snapshot(self.health_path, snapshot)
+        stamp = BASE_TIME.timestamp()
+        os.utime(self.health_path, (stamp, stamp))
 
     def configuration(self, **overrides):
         payload = {
@@ -136,15 +145,110 @@ class NetworkAuditAlertCoreTest(unittest.TestCase):
     def test_health_evaluation_handles_missing_stale_and_storage_failure(self):
         missing = evaluate_health_snapshot(self.health_path, now=BASE_TIME)
         self.assertEqual("collector_health", missing[0].identity)
-        write_health_snapshot(
-            self.health_path,
-            HealthSnapshot(HealthStatus.HEALTHY, BASE_TIME, write_failures=3),
-        )
-        self.health_path.touch()
-        timestamp = BASE_TIME.timestamp()
-        os.utime(self.health_path, (timestamp, timestamp))
+        self.assertEqual("health snapshot is missing", missing[0].detail)
+
+        write_health_snapshot(self.health_path, HealthSnapshot(HealthStatus.HEALTHY, BASE_TIME))
+        stale_stamp = (BASE_TIME - timedelta(minutes=6)).timestamp()
+        os.utime(self.health_path, (stale_stamp, stale_stamp))
+        stale = evaluate_health_snapshot(self.health_path, now=BASE_TIME)
+        self.assertEqual(["collector_health"], [event.identity for event in stale])
+        self.assertEqual("health snapshot is stale", stale[0].detail)
+
+        self.write_fresh(HealthSnapshot(
+            HealthStatus.HEALTHY, BASE_TIME,
+            write_failures=3, last_write_failure_at=BASE_TIME - timedelta(seconds=5),
+        ))
         current = evaluate_health_snapshot(self.health_path, now=BASE_TIME)
-        self.assertEqual("storage_write", current[-1].identity)
+        self.assertEqual(["storage_write"], [event.identity for event in current])
+        self.assertEqual(3, current[0].observed_value)
+        self.assertIn("cumulative_since_start=3", current[0].detail)
+
+    def test_latched_storage_failure_outside_the_recency_window_stays_silent(self):
+        # write_failures only resets on collector restart. The 2026-09-28 incident sent seven
+        # identical emails for two transient failures four hours earlier, so a counted failure
+        # has to be recent as well as non-zero.
+        self.write_fresh(HealthSnapshot(
+            HealthStatus.HEALTHY, BASE_TIME,
+            write_failures=7, last_write_failure_at=BASE_TIME - timedelta(minutes=6),
+        ))
+        self.assertEqual([], evaluate_health_snapshot(self.health_path, now=BASE_TIME))
+
+    def test_storage_write_recency_boundary_is_inclusive(self):
+        for age, expected in ((timedelta(minutes=5), 1), (timedelta(minutes=5, seconds=1), 0)):
+            with self.subTest(age=age):
+                self.write_fresh(HealthSnapshot(
+                    HealthStatus.HEALTHY, BASE_TIME, write_failures=2, last_write_failure_at=BASE_TIME - age,
+                ))
+                events = evaluate_health_snapshot(self.health_path, now=BASE_TIME)
+                self.assertEqual(expected, len([event for event in events if event.identity == "storage_write"]))
+
+    def test_snapshot_without_a_write_failure_timestamp_falls_back_to_status(self):
+        # Collectors built before the timestamp existed only publish the counter. Falling back to
+        # the live status keeps a real outage alerting without letting a recovered collector shout.
+        self.write_fresh(HealthSnapshot(
+            HealthStatus.DEGRADED, BASE_TIME, write_failures=4, last_error="audit database unavailable",
+        ))
+        degraded = evaluate_health_snapshot(self.health_path, now=BASE_TIME)
+        self.assertEqual(["collector_health", "storage_write"], [event.identity for event in degraded])
+        self.assertEqual("collector audit storage writes are failing", degraded[-1].detail)
+
+        self.write_fresh(HealthSnapshot(HealthStatus.HEALTHY, BASE_TIME, write_failures=4))
+        self.assertEqual([], evaluate_health_snapshot(self.health_path, now=BASE_TIME))
+
+    def test_zero_write_failures_never_alert_even_with_a_current_timestamp(self):
+        self.write_fresh(HealthSnapshot(
+            HealthStatus.HEALTHY, BASE_TIME, write_failures=0, last_write_failure_at=BASE_TIME,
+        ))
+        self.assertEqual([], evaluate_health_snapshot(self.health_path, now=BASE_TIME))
+
+    def test_storage_recency_must_be_a_positive_timedelta(self):
+        self.write_fresh(HealthSnapshot(HealthStatus.HEALTHY, BASE_TIME))
+        for invalid in (timedelta(0), timedelta(minutes=-1), "PT5M", None):
+            with self.subTest(storage_recency=invalid):
+                with self.assertRaises(ValueError):
+                    evaluate_health_snapshot(self.health_path, now=BASE_TIME, storage_recency=invalid)
+
+    def test_storage_write_recency_tolerates_the_naive_and_aware_mix(self):
+        # normalize_utc() hands back naive UTC while HealthSnapshot stores aware UTC. Subtracting
+        # one from the other raises TypeError, which used to abort every single health check.
+        snapshot = HealthSnapshot(
+            HealthStatus.HEALTHY, BASE_TIME, write_failures=1, last_write_failure_at=BASE_TIME,
+        )
+        self.assertTrue(storage_write_is_current(snapshot, BASE_TIME, DEFAULT_STORAGE_WRITE_RECENCY))
+        self.assertTrue(storage_write_is_current(
+            snapshot, BASE_TIME.replace(tzinfo=None), DEFAULT_STORAGE_WRITE_RECENCY,
+        ))
+        self.assertFalse(storage_write_is_current(
+            snapshot, BASE_TIME + timedelta(minutes=6), DEFAULT_STORAGE_WRITE_RECENCY,
+        ))
+
+    def test_storage_write_detail_and_chinese_translation(self):
+        snapshot = HealthSnapshot(
+            HealthStatus.DEGRADED, BASE_TIME, write_failures=7,
+            last_write_failure_at=datetime(2026, 9, 28, 2, 14, 3, tzinfo=timezone.utc),
+            last_error="audit database unavailable",
+        )
+        detail = storage_write_detail(snapshot)
+        self.assertEqual(
+            "collector audit storage writes are failing "
+            "(last_failure_at=2026-09-28T02:14:03+00:00; cumulative_since_start=7)",
+            detail,
+        )
+        self.assertEqual(
+            "采集器审计存储写入失败，最近一次 2026-09-28 02:14:03 UTC，自采集器启动累计 7 次",
+            _alert_detail(detail),
+        )
+        body = _alert_body(
+            AlertEvent(identity="storage_write", alert_type="storage_write", observed_value=7,
+                       threshold=None, detail=detail),
+            BASE_TIME,
+        )
+        self.assertIn("告警类型：审计存储写入失败", body)
+        self.assertIn("详细信息：采集器审计存储写入失败，最近一次 2026-09-28 02:14:03 UTC", body)
+        self.assertEqual(
+            "collector audit storage writes are failing",
+            storage_write_detail(HealthSnapshot(HealthStatus.HEALTHY, BASE_TIME, write_failures=2)),
+        )
 
     def test_alert_email_subject_and_body_are_in_chinese(self):
         event = AlertEvent(

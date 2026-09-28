@@ -15,7 +15,13 @@ sys.path.insert(0, str(ROOT / "src"))
 try:
     import sqlalchemy as db
     from network_audit.repository import WINDOW_DURATION
-    from network_audit.service import NetworkAuditService, NetworkAuditServiceError
+    from network_audit.service import (
+        NetworkAuditService,
+        NetworkAuditServiceError,
+        SQLITE_BUSY_TIMEOUT_MS,
+        SQLITE_JOURNAL_MODE,
+        SQLITE_JOURNAL_SIZE_LIMIT_BYTES,
+    )
     from network_audit.validation import AuditObservation, AuditPeerNetwork, AuditPolicyRule, AuditQuery, AuditValidationError
 except ModuleNotFoundError:
     db = None
@@ -67,6 +73,66 @@ class NetworkAuditServiceTest(unittest.TestCase):
     def tearDown(self):
         self.service.engine.dispose()
         self.temporary_directory.cleanup()
+
+    def test_audit_database_applies_the_configured_sqlite_pragmas(self):
+        self.service.record_observation(observation())
+
+        diagnostics = self.service.storage_diagnostics()
+
+        self.assertEqual(SQLITE_JOURNAL_MODE, diagnostics["journal_mode"])
+        self.assertEqual(SQLITE_BUSY_TIMEOUT_MS, diagnostics["busy_timeout"])
+        self.assertEqual(SQLITE_JOURNAL_SIZE_LIMIT_BYTES, diagnostics["journal_size_limit"])
+        # Durability outranks throughput: synchronous must stay at the SQLite FULL default.
+        self.assertEqual(2, diagnostics["synchronous"])
+        self.assertEqual(str(self.database_path), diagnostics["database_path"])
+        self.assertEqual(1, self.service.query(query_payload())["pagination"]["total"])
+
+    def test_pragma_statements_are_logged_once_per_database(self):
+        # Services get constructed repeatedly, so the effective-settings line must appear exactly
+        # once per database file or journalctl becomes useless. LOGGER is spied on rather than
+        # captured with assertLogs(): dashboard.py dictConfig() runs with the default
+        # disable_existing_loggers=True, so any network_audit logger created before that import is
+        # muted inside the dashboard process - a real suppression that must not hide this bug.
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            first_path = pathlib.Path(temporary_directory) / "wgdashboard_audit.db"
+            with mock.patch("network_audit.service.LOGGER") as logger:
+                for _ in range(2):
+                    NetworkAuditService(first_path).engine.dispose()
+
+                self.assertEqual(1, logger.info.call_count)
+                rendered = logger.info.call_args.args[0] % logger.info.call_args.args[1:]
+                self.assertIn(f"journal_mode={SQLITE_JOURNAL_MODE}", rendered)
+                self.assertIn(f"path={first_path}", rendered)
+
+                NetworkAuditService(pathlib.Path(temporary_directory) / "second.db").engine.dispose()
+
+                self.assertEqual(2, logger.info.call_count)
+
+    def test_sqlite_pragma_failures_do_not_block_audit_writes(self):
+        # A filesystem that refuses WAL must degrade to the rollback journal, never lose the
+        # audit path. Patched for the whole test because every fresh connection re-runs the
+        # pragmas, and SQLite silently ignores anything it does not understand.
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = pathlib.Path(temporary_directory) / "wgdashboard_audit.db"
+            patcher = mock.patch(
+                "network_audit.service._sqlite_pragma_statements",
+                side_effect=RuntimeError("pragma configuration unavailable"),
+            )
+            self.addCleanup(patcher.stop)
+            patcher.start()
+            service = NetworkAuditService(database_path)
+            self.addCleanup(service.engine.dispose)
+
+            service.record_observation(observation())
+
+            self.assertEqual(1, service.query(query_payload())["pagination"]["total"])
+            diagnostics = service.storage_diagnostics()
+            # journal_mode is the durable proof the pragma never ran: WAL lives in the file
+            # header, so a database that was switched once would report "wal" forever.
+            # busy_timeout cannot be used for that - pysqlite already defaults to 5000 ms,
+            # which is why journal_size_limit (SQLite default -1) is asserted as well.
+            self.assertEqual("delete", diagnostics["journal_mode"])
+            self.assertEqual(-1, diagnostics["journal_size_limit"])
 
     def test_initializes_an_independent_schema_without_main_database_tables(self):
         tables = set(db.inspect(self.service.engine).get_table_names())

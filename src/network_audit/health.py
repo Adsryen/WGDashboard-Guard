@@ -54,6 +54,7 @@ class HealthSnapshot:
     incomplete_flows: int = 0
     netlink_overruns: int = 0
     write_failures: int = 0
+    last_write_failure_at: datetime | None = None
     last_error: str | None = None
     config_generation: int = 0
     config_sync_status: ConfigSyncStatus | str = ConfigSyncStatus.UNKNOWN
@@ -75,6 +76,9 @@ class HealthSnapshot:
         object.__setattr__(self, "started_at", started_at)
         object.__setattr__(self, "last_event_at", _timestamp(self.last_event_at, "last_event_at"))
         object.__setattr__(self, "last_persisted_at", _timestamp(self.last_persisted_at, "last_persisted_at"))
+        object.__setattr__(
+            self, "last_write_failure_at", _timestamp(self.last_write_failure_at, "last_write_failure_at")
+        )
         try:
             config_sync_status = ConfigSyncStatus(self.config_sync_status)
         except ValueError as error:
@@ -108,6 +112,7 @@ class HealthSnapshot:
             "incomplete_flows": self.incomplete_flows,
             "netlink_overruns": self.netlink_overruns,
             "write_failures": self.write_failures,
+            "last_write_failure_at": _isoformat(self.last_write_failure_at),
             "last_error": self.last_error,
             "config_generation": self.config_generation,
             "config_sync_status": self.config_sync_status.value,
@@ -124,7 +129,8 @@ class HealthSnapshot:
             "status", "started_at", "last_event_at", "last_persisted_at", "spool_records", "spool_bytes",
             "dropped_records", "nflog_events", "conntrack_events", "correlation_timeouts", "incomplete_flows",
             "netlink_overruns",
-            "write_failures", "last_error", "config_generation", "config_sync_status", "config_sync_at",
+            "write_failures", "last_write_failure_at", "last_error", "config_generation", "config_sync_status",
+            "config_sync_at",
             "config_sync_generation", "config_sync_error",
         }
         unknown_fields = set(payload) - expected_fields

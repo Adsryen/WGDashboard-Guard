@@ -63,7 +63,11 @@ export default {
 			return this.capabilities?.capabilities?.supported === true && !this.loading && !this.applying
 		},
 		canReview(){
-			if (!this.policy.managed) return false;
+			// Turning forwarded access control off is a saveable change in its own right: the API
+			// accepts managed=false and rejects rules alongside it, so there is nothing left to
+			// validate. It still has to be a real change, otherwise a Peer that was never
+			// configured gets a pointless deactivate revision.
+			if (!this.policy.managed) return this.hasUnappliedChanges;
 			return isPolicyGroupsValid(this.policy.groups);
 		},
 		allPortsRuleCount(){
@@ -310,7 +314,10 @@ export default {
 			});
 		},
 		async runPrimaryAction(){
-			if (!this.canReview) return;
+			if (!this.canReview){
+				this.error = GetLocale("Review the rules, then confirm before applying them to the gateway.")
+				return
+			}
 			if (this.previewRequired){
 				await this.preview()
 			}else{
@@ -554,7 +561,7 @@ export default {
 			<section class="policy-tab-actions policy-review-actions">
 				<div class="small text-muted"><i :class="[previewStale ? 'bi bi-exclamation-triangle' : (previewRuleset ? 'bi bi-shield-check' : 'bi bi-clipboard-check'), 'text-primary me-1']"></i><LocaleText :t="reviewHint" /></div>
 				<div class="d-flex flex-wrap gap-2 ms-auto">
-					<button type="button" class="btn btn-primary" :disabled="!canManage || (!previewRuleset && !hasUnappliedChanges)" @click="runPrimaryAction"><i :class="[primaryActionIcon, 'me-1']"></i><LocaleText :t="primaryActionLabel"></LocaleText></button>
+					<button type="button" class="btn btn-primary" :disabled="!canManage || !canReview || (!previewRuleset && !hasUnappliedChanges)" @click="runPrimaryAction"><i :class="[primaryActionIcon, 'me-1']"></i><LocaleText :t="primaryActionLabel"></LocaleText></button>
 					<button v-if="hasUnappliedChanges || previewRuleset" type="button" class="btn btn-outline-secondary" :disabled="applying" @click="resetChanges"><i class="bi bi-arrow-counterclockwise me-1"></i><LocaleText t="Discard changes" /></button>
 				</div>
 			</section>

@@ -9,7 +9,9 @@ import {
 	policyStateIcon,
 	previewConfirmationHint,
 	primaryAction,
-	reviewDescription
+	reviewConfirmationHint,
+	reviewDescription,
+	unsavedChangesHint
 } from "./policyFlow.js";
 
 const managedPolicy = () => ({
@@ -84,6 +86,17 @@ test("the confirmation nudge matches what the button will do", () => {
 	assert.doesNotMatch(hint, /confirm application/);
 });
 
+test("the badge sub-line and the review footer describe the click they precede", () => {
+	assert.equal(unsavedChangesHint(managedPolicy()), "Editing does not change forwarding access. Review the change, then confirm application.");
+	const disableEdit = unsavedChangesHint(disabledPolicy());
+	assert.doesNotMatch(disableEdit, /confirm application/);
+	assert.match(disableEdit, /confirm disabling access control/);
+	assert.equal(reviewConfirmationHint(managedPolicy()), "Apply only after reviewing the generated rules.");
+	const disableReview = reviewConfirmationHint(disabledPolicy());
+	assert.doesNotMatch(disableReview, /\bApply\b/);
+	assert.equal(disableReview, "Confirm only after reviewing the generated rules.");
+});
+
 test("every label handed to the template is a declared locale key", () => {
 	const produced = new Set([
 		...POLICY_FLOW_LOCALE_KEYS,
@@ -93,7 +106,11 @@ test("every label handed to the template is a declared locale key", () => {
 		reviewDescription(managedPolicy()),
 		reviewDescription(disabledPolicy()),
 		previewConfirmationHint(managedPolicy()),
-		previewConfirmationHint(disabledPolicy())
+		previewConfirmationHint(disabledPolicy()),
+		unsavedChangesHint(managedPolicy()),
+		unsavedChangesHint(disabledPolicy()),
+		reviewConfirmationHint(managedPolicy()),
+		reviewConfirmationHint(disabledPolicy())
 	]);
 	for (const state of [
 		{loading: true, managed: true},

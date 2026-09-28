@@ -25,6 +25,10 @@ export const POLICY_FLOW_LOCALE_KEYS = [
 	"Save changes",
 	"Apply changes",
 	"Confirm disable",
+	"Editing does not change forwarding access. Review the change, then confirm application.",
+	"Editing does not change forwarding access. Review the change, then confirm disabling access control.",
+	"Apply only after reviewing the generated rules.",
+	"Confirm only after reviewing the generated rules.",
 	"These are the exact rules that will be applied after confirmation.",
 	"Forwarded access control will be turned off for this Peer. Its destination rules will be removed from the gateway.",
 	"Review the generated rules below, then confirm application.",
@@ -67,6 +71,20 @@ export const reviewDescription = (policy) => (isManaged(policy)
 export const previewConfirmationHint = (policy) => (isManaged(policy)
 	? "Review the generated rules below, then confirm application."
 	: "Review the generated rules below, then confirm disabling access control.");
+
+/**
+ * The sub-line under the state badge while edits sit unapplied. It used to hard-code "confirm
+ * application" for every case, so a Peer being switched off read "confirm application" one line
+ * above a button that says "Confirm disable".
+ */
+export const unsavedChangesHint = (policy) => (isManaged(policy)
+	? "Editing does not change forwarding access. Review the change, then confirm application."
+	: "Editing does not change forwarding access. Review the change, then confirm disabling access control.");
+
+/** Review tab footer, shown beside the primary button once a fresh preview exists. */
+export const reviewConfirmationHint = (policy) => (isManaged(policy)
+	? "Apply only after reviewing the generated rules."
+	: "Confirm only after reviewing the generated rules.");
 
 export const policyState = (state) => {
 	const current = readState(state);

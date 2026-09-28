@@ -21,7 +21,9 @@ import {
 	policyState as describePolicyState,
 	policyStateClass as describePolicyStateClass,
 	policyStateIcon as describePolicyStateIcon,
-	reviewDescription as describeReviewDescription
+	reviewConfirmationHint as describeReviewConfirmationHint,
+	reviewDescription as describeReviewDescription,
+	unsavedChangesHint as describeUnsavedChangesHint
 } from "@/components/networkPolicy/policyFlow.js";
 
 const emptyPolicy = () => ({managed: false, groups: []});
@@ -101,7 +103,7 @@ export default {
 		},
 		reviewHint(){
 			if (this.previewStale) return "The rules have changed since the last review. Save again to regenerate the preview."
-			if (this.previewRuleset) return "Apply only after reviewing the generated rules."
+			if (this.previewRuleset) return describeReviewConfirmationHint(this.policy)
 			return "Save changes to generate the exact nftables rules."
 		},
 		reviewDescriptionText(){
@@ -111,6 +113,11 @@ export default {
 		},
 		previewConfirmHint(){
 			return describePreviewConfirmationHint(this.policy)
+		},
+		unsavedChangesHintText(){
+			// Same objection as the review footer: what sits under the badge must describe the click
+			// the operator is about to make, and for a switched-off Peer that click removes rules.
+			return describeUnsavedChangesHint(this.policy)
 		},
 		policySignature(){
 			return this.projectSignature(this.policy)
@@ -481,7 +488,7 @@ export default {
 				<i :class="policyStateIcon"></i>
 				<div>
 					<strong><LocaleText :t="changeState" /></strong>
-					<span v-if="hasUnappliedChanges" class="ms-1"><LocaleText t="Editing does not change forwarding access. Review the change, then confirm application." /></span>
+					<span v-if="hasUnappliedChanges" class="ms-1"><LocaleText :t="unsavedChangesHintText" /></span>
 					<span v-else-if="!previewRequired && previewRuleset" class="ms-1"><LocaleText :t="previewConfirmHint" /></span>
 				</div>
 			</div>

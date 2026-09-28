@@ -333,7 +333,9 @@ export default {
 			this.error = "";
 			await fetchPost("/api/networkPolicy/apply", this.basePayload(), (res) => {
 				if (res.status){
-					this.store.newMessage("WGDashboard", GetLocale("Network policy applied"), "success");
+					// managed=false goes through this same endpoint, so the toast has to
+					// say "disabled" or it contradicts the revision history it just wrote.
+					this.store.newMessage("WGDashboard", GetLocale(this.policy.managed ? "Network policy applied" : "Network policy disabled"), "success");
 					this.previewRequired = true;
 					this.previewRuleset = "";
 					this.disableConfirmation = false;

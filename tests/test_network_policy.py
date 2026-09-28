@@ -739,6 +739,37 @@ class NetworkPolicyServiceTest(unittest.TestCase):
         self.assertIs(False, result["policy"]["managed"])
         self.assertEqual([], result["policy"]["rules"])
 
+    def test_unmanaged_save_is_recorded_as_deactivate_not_apply(self):
+        # The switch-off save posts managed=false to /apply and the history panel
+        # renders GetLocale(revision.action) - "应用" vs "停用". Labelling the
+        # off-transition "apply" tells the operator the opposite of what happened,
+        # so both ways of reaching managed=false must share one label, while an
+        # explicit action must never be relabelled by that normalisation.
+        original = policy_payload(rules=[{
+            "destination": "192.168.10.117", "protocol": "tcp", "ports": {"from": 443, "to": 443}
+        }])
+        actions = lambda: {
+            row["version"]: row["action"]
+            for row in self.service.details("wg0", PUBLIC_KEY, "10.8.0.2")["revisions"]
+        }
+
+        self.service.apply(original, "test-actor")
+        self.service.apply(policy_payload(managed=False, rules=[]), "test-actor")
+        self.assertEqual({1: "apply", 2: "deactivate"}, actions())
+
+        self.service.apply(original, "test-actor")
+        self.service.deactivate(original, "test-actor")
+        self.assertEqual({1: "apply", 2: "deactivate", 3: "apply", 4: "deactivate"}, actions())
+
+        self.service.rollback(
+            next(row["revision_id"]
+                 for row in self.service.details("wg0", PUBLIC_KEY, "10.8.0.2")["revisions"]
+                 if row["version"] == 4),
+            "test-actor",
+        )
+        self.assertEqual("rollback", actions()[5])
+        self.assertIs(False, self.service.details("wg0", PUBLIC_KEY, "10.8.0.2")["policy"]["managed"])
+
     def test_details_include_the_policy_snapshot_for_each_revision(self):
         original = policy_payload(rules=[{
             "destination": "192.168.10.117", "protocol": "tcp", "ports": {"from": 443, "to": 443}

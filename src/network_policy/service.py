@@ -293,6 +293,14 @@ class NetworkPolicyService:
 
     def apply(self, payload: Any, actor: str, action: str = "apply") -> dict[str, Any]:
         policy = validate_policy(payload)
+        if action == "apply" and not policy.managed:
+            # The modal's "turn forwarded access control off" save posts here, and
+            # deactivate() is only a wrapper around this call. Both land the Peer
+            # outside the desired set, so the agent payload is identical - but the
+            # revision history renders GetLocale(revision.action), and labelling the
+            # off-transition "apply" (应用) would tell the operator the opposite of
+            # what was done. Explicit actions (rollback, suspend) keep their label.
+            action = "deactivate"
         candidate = self.repository.create_candidate(policy, actor, action)
         desired = self._desired_policies(policy, candidate.policy_id)
         try:

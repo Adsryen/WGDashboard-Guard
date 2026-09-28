@@ -89,7 +89,11 @@ republished automatically rather than waiting for a human to press sync.
   `deactivate()` wraps, and `validate_policy()` rejects rules alongside `managed: false`
   ("unmanaged policies cannot contain rules"), so the Peer simply leaves the desired set while
   every other managed Peer is republished unchanged. The Review step stays reachable with the
-  switch off — the off transition has to be applicable, not only reversible.
+  switch off — the off transition has to be applicable, not only reversible. Because that save
+  carries no `rules`, `apply()` records it as the `deactivate` revision action (the same label
+  the Overview **Disable policy** button writes) and the modal's toast says
+  *Network policy disabled*, so history and notifications never describe an off-transition as
+  an apply. Explicit `rollback` / `suspend` actions keep their own labels.
 - For an emergency return to the host's pre-feature forwarding behavior, stop the reconciler
   first — otherwise the timer republishes the table within one pass — then stop the Agent and
   delete only the owned table:

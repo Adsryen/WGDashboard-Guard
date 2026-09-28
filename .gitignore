@@ -4,6 +4,9 @@
 .idea
 src/db
 /db/
+# Collector writes its sync-status to the cwd-relative default db/ ; running
+# unittest from tests/ therefore drops generated files in tests/db/.
+tests/db/
 __pycache__
 src/test.py
 *.db

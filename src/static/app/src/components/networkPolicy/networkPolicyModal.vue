@@ -16,6 +16,7 @@ import {
 // stay unchanged.
 import {
 	canReviewPolicy,
+	canSubmitPolicyChange,
 	previewConfirmationHint as describePreviewConfirmationHint,
 	primaryAction,
 	policyState as describePolicyState,
@@ -191,6 +192,19 @@ export default {
 	},
 	methods: {
 		GetLocale,
+		canSubmitChange(step){
+			// Both tabs drive one primary action, so both ask the same predicate. The gate used to be
+			// spelled out inline in the template, which is the shape that hid the "switched forwarded
+			// access control off and Save never became clickable" defect: the single condition that
+			// decides whether the operator can click at all was the one condition no test could see.
+			return canSubmitPolicyChange({
+				step,
+				canManage: this.canManage,
+				canReview: this.canReview,
+				previewRuleset: this.previewRuleset,
+				hasUnappliedChanges: this.hasUnappliedChanges
+			});
+		},
 		projectSignature(policy){
 			return JSON.stringify({
 				managed: Boolean(policy.managed),
@@ -562,7 +576,7 @@ export default {
 			<section class="policy-tab-actions policy-rules-actions">
 				<div class="small text-muted"><i class="bi bi-save text-primary me-1"></i><LocaleText t="Save changes to generate the exact nftables rules, then apply them after review." /></div>
 				<div class="d-flex flex-wrap gap-2 ms-auto">
-					<button type="button" class="btn btn-primary" :disabled="!canManage || !canReview" @click="runPrimaryAction"><i :class="[primaryActionIcon, 'me-1']"></i><LocaleText :t="primaryActionLabel"></LocaleText></button>
+					<button type="button" class="btn btn-primary" :disabled="!canSubmitChange('rules')" @click="runPrimaryAction"><i :class="[primaryActionIcon, 'me-1']"></i><LocaleText :t="primaryActionLabel"></LocaleText></button>
 					<button v-if="hasUnappliedChanges || previewRuleset" type="button" class="btn btn-outline-secondary" :disabled="applying" @click="resetChanges"><i class="bi bi-arrow-counterclockwise me-1"></i><LocaleText t="Discard changes"></LocaleText></button>
 				</div>
 			</section>
@@ -597,7 +611,7 @@ export default {
 			<section class="policy-tab-actions policy-review-actions">
 				<div class="small text-muted"><i :class="[previewStale ? 'bi bi-exclamation-triangle' : (previewRuleset ? 'bi bi-shield-check' : 'bi bi-clipboard-check'), 'text-primary me-1']"></i><LocaleText :t="reviewHint" /></div>
 				<div class="d-flex flex-wrap gap-2 ms-auto">
-					<button type="button" class="btn btn-primary" :disabled="!canManage || !canReview || (!previewRuleset && !hasUnappliedChanges)" @click="runPrimaryAction"><i :class="[primaryActionIcon, 'me-1']"></i><LocaleText :t="primaryActionLabel"></LocaleText></button>
+					<button type="button" class="btn btn-primary" :disabled="!canSubmitChange('review')" @click="runPrimaryAction"><i :class="[primaryActionIcon, 'me-1']"></i><LocaleText :t="primaryActionLabel"></LocaleText></button>
 					<button v-if="hasUnappliedChanges || previewRuleset" type="button" class="btn btn-outline-secondary" :disabled="applying" @click="resetChanges"><i class="bi bi-arrow-counterclockwise me-1"></i><LocaleText t="Discard changes" /></button>
 				</div>
 			</section>

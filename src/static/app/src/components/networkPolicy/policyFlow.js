@@ -51,6 +51,24 @@ export const canReviewPolicy = (policy, hasUnappliedChanges = false) => {
 	return isPolicyGroupsValid(Array.isArray(policy.groups) ? policy.groups : []);
 };
 
+/**
+ * Whether the primary button may be clicked, and what it still needs first. `rules` submits to
+ * generate a preview; `review` submits to confirm one. The review tab is the only step that
+ * additionally needs something on screen to confirm - and an edit that has no preview yet still
+ * qualifies there, because submitting that step regenerates the preview instead of applying blind.
+ *
+ * This is the second half of the same lesson as canReviewPolicy: the template used to carry this
+ * gate inline, so the one condition that decides "can the operator click Save at all" was the only
+ * part of the flow nothing could test. Anything but the rules tab fails closed, so a missing or
+ * misspelled step cannot hand the operator a live button with nothing to confirm.
+ */
+export const canSubmitPolicyChange = ({step = "review", canManage, canReview, previewRuleset,
+	hasUnappliedChanges} = {}) => {
+	if (!canManage || !canReview) return false;
+	if (step !== "rules") return Boolean(previewRuleset) || Boolean(hasUnappliedChanges);
+	return true;
+};
+
 /** Label/icon of the single primary button, per step (generate the preview first, then confirm). */
 export const primaryAction = (policy, previewRequired) => {
 	if (previewRequired) return {label: "Save changes", icon: "bi bi-save"};

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
 	POLICY_FLOW_LOCALE_KEYS,
 	canReviewPolicy,
+	canSubmitPolicyChange,
 	policyState,
 	policyStateClass,
 	policyStateIcon,
@@ -124,4 +125,26 @@ test("every label handed to the template is a declared locale key", () => {
 	}
 	assert.deepEqual([...produced].filter((key) => !POLICY_FLOW_LOCALE_KEYS.includes(key)), []);
 	assert.equal(new Set(POLICY_FLOW_LOCALE_KEYS).size, POLICY_FLOW_LOCALE_KEYS.length);
+});
+
+test("the primary button stays gated by the tab it sits on", () => {
+	// Rules tab: a switch turned off is clickable on its own merit...
+	assert.equal(canSubmitPolicyChange({step: "rules", canManage: true, canReview: canReviewPolicy(disabledPolicy(), true), previewRuleset: "", hasUnappliedChanges: true}), true);
+	// ...and a managed Peer with broken destination groups is not.
+	assert.equal(canSubmitPolicyChange({step: "rules", canManage: true, canReview: canReviewPolicy(invalidPolicy(), true), previewRuleset: "", hasUnappliedChanges: true}), false);
+	// While the modal is loading or applying, nothing is clickable in either step.
+	assert.equal(canSubmitPolicyChange({step: "rules", canManage: false, canReview: true, previewRuleset: "flush table inet wgd_network_policy", hasUnappliedChanges: false}), false);
+	assert.equal(canSubmitPolicyChange({step: "review", canManage: false, canReview: true, previewRuleset: "flush table inet wgd_network_policy", hasUnappliedChanges: false}), false);
+	// Review tab: a generated ruleset is what makes the confirm click honest.
+	assert.equal(canSubmitPolicyChange({step: "review", canManage: true, canReview: canReviewPolicy(managedPolicy(), false), previewRuleset: "flush table inet wgd_network_policy", hasUnappliedChanges: false}), true);
+	assert.equal(canSubmitPolicyChange({step: "review", canManage: true, canReview: canReviewPolicy(disabledPolicy(), true), previewRuleset: "flush table inet wgd_network_policy", hasUnappliedChanges: false}), true);
+	// The whole point of the extra clause: no preview and nothing pending means there is nothing to
+	// confirm, so the button must not promise a review that never happened.
+	assert.equal(canSubmitPolicyChange({step: "review", canManage: true, canReview: true, previewRuleset: "", hasUnappliedChanges: false}), false);
+	// An un-previewed edit still submits from the review tab, because that click regenerates it.
+	assert.equal(canSubmitPolicyChange({step: "review", canManage: true, canReview: true, previewRuleset: "", hasUnappliedChanges: true}), true);
+	// Unknown or omitted step falls back to the stricter rule instead of handing out a live button.
+	assert.equal(canSubmitPolicyChange({canManage: true, canReview: true, previewRuleset: "", hasUnappliedChanges: false}), false);
+	assert.equal(canSubmitPolicyChange({step: "history", canManage: true, canReview: true, previewRuleset: "", hasUnappliedChanges: false}), false);
+	assert.equal(canSubmitPolicyChange(), false);
 });

@@ -15,6 +15,7 @@ from typing import Any, Callable, Mapping, Protocol
 
 from .health import ConfigSyncStatus, HealthStatus, read_health_snapshot
 from .service import NetworkAuditService, NetworkAuditServiceError
+from .runtime_logging import configure_runtime_logging
 from .validation import AuditValidationError, normalize_utc
 
 
@@ -618,6 +619,9 @@ def main() -> None:
     )
     parser.add_argument("--once", action="store_true", help="evaluate once and exit")
     arguments = parser.parse_args()
+    # See the collector entrypoint: without this the INFO diagnostics this process emits
+    # are dropped by the logging last-resort handler (WARNING and above only).
+    configure_runtime_logging()
 
     service = NetworkAuditService(arguments.database)
     runner = NetworkAuditAlertRunner(

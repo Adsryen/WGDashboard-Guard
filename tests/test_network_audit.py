@@ -1,4 +1,6 @@
 import importlib
+import io
+import logging
 import os
 import pathlib
 import sys
@@ -6,6 +8,7 @@ import tempfile
 import unittest
 import ipaddress
 from datetime import datetime, timedelta, timezone
+from logging.config import dictConfig
 from unittest import mock
 
 
@@ -680,6 +683,184 @@ class NetworkAuditApiTest(unittest.TestCase):
         data = response.get_json()["data"]
         self.assertEqual(1, data["pagination"]["total"])
         self.assertTrue(data["records"][0]["destination_in_policy"])
+
+
+
+class NetworkAuditRuntimeLoggingTest(unittest.TestCase):
+    """The standalone units must be able to prove their own storage settings from the journal.
+
+    These cases capture a real stream instead of counting calls on a mocked logger. Production
+    shipped that failure mode on 2026-09-28: the connect-event pragmas *were* applied
+    (``journal_size_limit=67108864`` read back from the live engine) while
+    ``journalctl -u wgd-network-audit-collector`` showed nothing, because no handler existed and
+    the logging last-resort handler only emits WARNING+. A call-count assertion cannot see that.
+    """
+
+    def setUp(self):
+        from network_audit import runtime_logging
+
+        self.module = runtime_logging
+        self.logger = logging.getLogger(runtime_logging.AUDIT_LOGGER_NAME)
+        self.saved = (self.logger.level, self.logger.propagate, list(self.logger.handlers))
+        self.stream = io.StringIO()
+
+    def tearDown(self):
+        for handler in list(self.logger.handlers):
+            self.logger.removeHandler(handler)
+        self.logger.setLevel(self.saved[0])
+        self.logger.propagate = self.saved[1]
+        self.logger.handlers = self.saved[2]
+
+    def configure(self, **kwargs):
+        return self.module.configure_runtime_logging(stream=self.stream, **kwargs)
+
+    def render(self):
+        for handler in self.logger.handlers:
+            handler.flush()
+        return self.stream.getvalue()
+
+    def test_info_records_become_observable(self):
+        self.configure()
+
+        logging.getLogger("network_audit.service").info(
+            "network audit sqlite storage: journal_mode=%s", "wal"
+        )
+
+        rendered = self.render()
+        self.assertIn("journal_mode=wal", rendered)
+        self.assertIn("INFO", rendered)
+        self.assertIn("network_audit.service", rendered)
+
+    def test_records_survive_a_dashboard_style_dictconfig(self):
+        # Faithful reproduction of the real mechanism, not of a test-order accident: dashboard.py
+        # installs a dictConfig with disable_existing_loggers left at its True default, which marks
+        # *every* logger that already exists as disabled - children included. A version of this fix
+        # that only cleared the "network_audit" root name passed the isolated run and still lost the
+        # line, because Logger.handle() bails on the child's own flag before the hierarchy is asked.
+        manager = logging.Logger.manager
+        child = logging.getLogger("network_audit.service")
+        root = logging.getLogger()
+        saved_disabled = {
+            name: value.disabled
+            for name, value in manager.loggerDict.items()
+            if isinstance(value, logging.Logger)
+        }
+        saved_root_level, saved_root_handlers = root.level, list(root.handlers)
+        try:
+            dictConfig({"version": 1, "root": {"level": "INFO"}})
+            self.assertTrue(child.disabled, "precondition: dictConfig must disable the child logger")
+
+            self.configure()
+            child.info("network audit sqlite storage: journal_mode=%s", "wal")
+
+            self.assertIn("journal_mode=wal", self.render())
+        finally:
+            for name, disabled in saved_disabled.items():
+                value = manager.loggerDict.get(name)
+                if isinstance(value, logging.Logger):
+                    value.disabled = disabled
+            root.setLevel(saved_root_level)
+            root.handlers = saved_root_handlers
+
+    def test_sweep_is_scoped_to_the_audit_subtree(self):
+        # Un-disabling the whole process would resurrect every third-party logger that
+        # disable_existing_loggers intentionally silenced. Only our subtree may be touched.
+        third_party = logging.getLogger("sqlalchemy.engine")
+        third_party.disabled = True
+        try:
+            self.configure()
+            self.assertTrue(third_party.disabled)
+            self.assertGreater(self.module.enable_audit_logging(), 0)
+        finally:
+            third_party.disabled = False
+
+    def test_third_party_info_stays_quiet(self):
+        # Promoting the audit subtree must not turn on SQL echoing for the whole process.
+        self.configure()
+
+        logging.getLogger("sqlalchemy.engine").info("SELECT count(*) FROM AuditEvents")
+
+        self.assertEqual("", self.render())
+
+    def test_configure_is_idempotent(self):
+        first = self.configure()
+        second = self.configure()
+
+        logging.getLogger("network_audit.service").info("one line")
+
+        self.assertIs(first, second)
+        self.assertEqual(1, len(self.logger.handlers))
+        self.assertEqual(1, self.render().count("\n"))
+
+    def test_records_are_not_emitted_twice_through_root(self):
+        # propagate is off for a reason: a root handler must not turn every audit line into two.
+        root = logging.getLogger()
+        saved_root_level = root.level
+        external = io.StringIO()
+        handler = logging.StreamHandler(external)
+        root.addHandler(handler)
+        root.setLevel(logging.DEBUG)
+        try:
+            self.configure()
+            logging.getLogger("network_audit.collector").info("exactly once")
+        finally:
+            root.removeHandler(handler)
+            root.setLevel(saved_root_level)
+
+        self.assertEqual(1, self.render().count("exactly once"))
+        self.assertEqual("", external.getvalue())
+
+    def test_environment_level_is_honoured(self):
+        with mock.patch.dict(os.environ, {self.module.LOG_LEVEL_ENVIRONMENT_VARIABLE: "WARNING"}):
+            self.configure()
+            logging.getLogger("network_audit.service").info("hidden info")
+            logging.getLogger("network_audit.service").warning("visible warning")
+
+        rendered = self.render()
+        self.assertNotIn("hidden info", rendered)
+        self.assertIn("visible warning", rendered)
+
+    def test_unusable_level_falls_back_instead_of_raising(self):
+        # These processes are the only writer of the audit trail; a bad env value must not
+        # be able to stop collection.
+        with mock.patch.dict(os.environ, {self.module.LOG_LEVEL_ENVIRONMENT_VARIABLE: "very-loud"}):
+            self.configure()
+            logging.getLogger("network_audit.service").info("still observable")
+
+        self.assertIn("still observable", self.render())
+
+    def test_collector_entrypoint_configures_logging(self):
+        from network_audit import collector
+
+        calls = []
+        with mock.patch.object(
+            collector, "configure_runtime_logging",
+            side_effect=lambda **kw: calls.append("logging") or {"configured": True},
+        ), mock.patch.object(collector, "run_collector", side_effect=lambda **kw: calls.append("run")):
+            with mock.patch.object(sys, "argv", ["collector"]):
+                collector.main()
+
+        self.assertEqual(["logging", "run"], calls)
+
+    def test_alerts_entrypoint_configures_logging_before_the_service(self):
+        from network_audit import alerts
+
+        calls = []
+
+        def note(name):
+            def _side_effect(*args, **kwargs):
+                calls.append(name)
+                return mock.MagicMock()
+            return _side_effect
+
+        with mock.patch.object(alerts, "configure_runtime_logging", side_effect=note("logging")), \
+             mock.patch.object(alerts, "NetworkAuditService", side_effect=note("service")), \
+             mock.patch.object(alerts, "NetworkAuditAlertRunner", side_effect=note("runner")), \
+             mock.patch.object(alerts, "signal"):
+            with mock.patch.object(sys, "argv", ["alerts", "--once"]):
+                alerts.main()
+
+        self.assertEqual(["logging", "service", "runner"], calls)
 
 
 if __name__ == "__main__":

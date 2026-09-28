@@ -19,6 +19,7 @@ from typing import Any, Callable, Iterator, Mapping, Protocol
 from .agent_protocol import AuditAgentConfig
 from .agent import DEFAULT_CONFIG_PATH, read_applied_config
 from .correlation import FlowCorrelator
+from .runtime_logging import configure_runtime_logging
 from .health import (
     ConfigSyncStatus,
     HealthSnapshot,
@@ -769,6 +770,9 @@ def main() -> None:
     parser.add_argument("--health", default=DEFAULT_HEALTH_PATH)
     parser.add_argument("--sync-status", default=DEFAULT_SYNC_STATUS_PATH)
     args = parser.parse_args()
+    # Standalone process: the dashboard's logging config never runs here, so opt in before the
+    # first NetworkAuditService construction, or the effective-pragmas line stays invisible.
+    configure_runtime_logging()
     run_collector(
         config_path=args.config,
         spool_path=args.spool,

@@ -1,0 +1,110 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+	POLICY_FLOW_LOCALE_KEYS,
+	canReviewPolicy,
+	policyState,
+	policyStateClass,
+	policyStateIcon,
+	previewConfirmationHint,
+	primaryAction,
+	reviewDescription
+} from "./policyFlow.js";
+
+const managedPolicy = () => ({
+	managed: true,
+	groups: [{destination: "192.168.0.117/32", protocol: "tcp", allPorts: true, ports: []}]
+});
+const disabledPolicy = () => ({managed: false, groups: []});
+const invalidPolicy = () => ({
+	managed: true,
+	groups: [{destination: "", protocol: "tcp", allPorts: false, ports: [{from: 443, to: 443}]}]
+});
+
+test("turning forwarded access control off is a saveable change on its own", () => {
+	// The regression that made the switch look dead: a Peer being disabled has no rules, so
+	// gating on "rules are valid" left the primary button permanently disabled.
+	assert.equal(canReviewPolicy(disabledPolicy(), true), true);
+	assert.equal(canReviewPolicy({managed: false, groups: [{destination: "bad", protocol: "tcp"}]}, true), true);
+});
+
+test("a Peer that was never configured cannot save an unchanged switch off", () => {
+	assert.equal(canReviewPolicy(disabledPolicy(), false), false);
+});
+
+test("an enabled policy still needs valid destination groups", () => {
+	assert.equal(canReviewPolicy(managedPolicy(), false), true);
+	assert.equal(canReviewPolicy(managedPolicy(), true), true);
+	assert.equal(canReviewPolicy(invalidPolicy(), true), false);
+	// Zero destinations is a deliberate deny-all, not an error.
+	assert.equal(canReviewPolicy({managed: true, groups: []}, true), true);
+});
+
+test("the primary button names the step it performs", () => {
+	assert.deepEqual(primaryAction(managedPolicy(), true), {label: "Save changes", icon: "bi bi-save"});
+	assert.deepEqual(primaryAction(disabledPolicy(), true), {label: "Save changes", icon: "bi bi-save"});
+	assert.deepEqual(primaryAction(managedPolicy(), false), {label: "Apply changes", icon: "bi bi-shield-check"});
+	assert.deepEqual(primaryAction(disabledPolicy(), false), {label: "Confirm disable", icon: "bi bi-shield-x"});
+});
+
+test("the state badge distinguishes an apply preview from a disable preview", () => {
+	const base = {
+		loading: false,
+		previewRequired: false,
+		previewRuleset: "flush table inet wgd_network_policy\nadd chain inet wgd_network_policy forward { ... }",
+		hasUnappliedChanges: false,
+		hasPersistedPolicy: true
+	};
+	assert.equal(policyState({...base, managed: true}), "Preview ready - confirm to apply");
+	assert.equal(policyState({...base, managed: false}), "Preview ready - confirm to disable");
+	assert.equal(policyStateClass({...base, managed: false}), "policy-state-info");
+	assert.equal(policyStateIcon({...base, managed: false}), "bi bi-eye");
+
+	assert.equal(policyState({...base, loading: true, managed: true}), "Loading policy state");
+	assert.equal(policyState({...base, previewRequired: true, previewRuleset: "", managed: true}), "Applied");
+	assert.equal(policyState({...base, previewRequired: true, previewRuleset: "", managed: false}), "Disabled");
+	assert.equal(policyState({...base, previewRequired: true, previewRuleset: "", hasUnappliedChanges: true, managed: false}), "Changes not applied");
+	// Precedence matters: an un-persisted Peer still shows "Not configured" only once there is
+	// nothing pending; a pending edit wins with "Changes not applied".
+	assert.equal(policyState({...base, previewRequired: true, previewRuleset: "", hasUnappliedChanges: false, hasPersistedPolicy: false, managed: false}), "Not configured");
+});
+
+test("the review panel never promises denial for a disable", () => {
+	const disableText = reviewDescription(disabledPolicy());
+	assert.doesNotMatch(disableText, /denied/i);
+	assert.doesNotMatch(disableText, /exact rules/i);
+	assert.equal(reviewDescription(managedPolicy()), "These are the exact rules that will be applied after confirmation.");
+});
+
+test("the confirmation nudge matches what the button will do", () => {
+	assert.equal(previewConfirmationHint(managedPolicy()), "Review the generated rules below, then confirm application.");
+	const hint = previewConfirmationHint(disabledPolicy());
+	assert.match(hint, /disabling access control/);
+	assert.doesNotMatch(hint, /confirm application/);
+});
+
+test("every label handed to the template is a declared locale key", () => {
+	const produced = new Set([
+		...POLICY_FLOW_LOCALE_KEYS,
+		primaryAction(managedPolicy(), true).label,
+		primaryAction(managedPolicy(), false).label,
+		primaryAction(disabledPolicy(), false).label,
+		reviewDescription(managedPolicy()),
+		reviewDescription(disabledPolicy()),
+		previewConfirmationHint(managedPolicy()),
+		previewConfirmationHint(disabledPolicy())
+	]);
+	for (const state of [
+		{loading: true, managed: true},
+		{loading: false, managed: true, previewRequired: false, previewRuleset: "flush table"},
+		{loading: false, managed: false, previewRequired: false, previewRuleset: "flush table"},
+		{loading: false, managed: false, previewRequired: true, previewRuleset: "", hasUnappliedChanges: true},
+		{loading: false, managed: false, previewRequired: true, previewRuleset: "", hasUnappliedChanges: false, hasPersistedPolicy: false},
+		{loading: false, managed: false, previewRequired: true, previewRuleset: "", hasUnappliedChanges: false, hasPersistedPolicy: true}
+	]){
+		produced.add(policyState(state));
+	}
+	assert.deepEqual([...produced].filter((key) => !POLICY_FLOW_LOCALE_KEYS.includes(key)), []);
+	assert.equal(new Set(POLICY_FLOW_LOCALE_KEYS).size, POLICY_FLOW_LOCALE_KEYS.length);
+});

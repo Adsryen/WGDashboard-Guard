@@ -8,10 +8,21 @@ import {
 	emptyPortGroup,
 	flattenGroups,
 	groupRules,
-	isPolicyGroupsValid,
 	portLabel,
 	validatePolicyGroups
 } from "@/components/networkPolicy/portGroups.js";
+// The save-flow predicates live in policyFlow.js, where node:test can reach them without a
+// browser. They are imported under describe* aliases so the computed names used by the template
+// stay unchanged.
+import {
+	canReviewPolicy,
+	previewConfirmationHint as describePreviewConfirmationHint,
+	primaryAction,
+	policyState as describePolicyState,
+	policyStateClass as describePolicyStateClass,
+	policyStateIcon as describePolicyStateIcon,
+	reviewDescription as describeReviewDescription
+} from "@/components/networkPolicy/policyFlow.js";
 
 const emptyPolicy = () => ({managed: false, groups: []});
 
@@ -66,18 +77,24 @@ export default {
 			// Turning forwarded access control off is a saveable change in its own right: the API
 			// accepts managed=false and rejects rules alongside it, so there is nothing left to
 			// validate. It still has to be a real change, otherwise a Peer that was never
-			// configured gets a pointless deactivate revision.
-			if (!this.policy.managed) return this.hasUnappliedChanges;
-			return isPolicyGroupsValid(this.policy.groups);
+			// configured gets a pointless deactivate revision. That is exactly the rule the
+			// old inline version broke: a Peer being disabled has no rules to validate, so the
+			// button stayed dead and the switch looked unsavable.
+			return canReviewPolicy(this.policy, this.hasUnappliedChanges);
 		},
 		allPortsRuleCount(){
 			return this.policy.groups.filter((group) => group.protocol !== "icmp" && group.allPorts).length;
 		},
+		primaryActionStep(){
+			return primaryAction(this.policy, this.previewRequired)
+		},
 		primaryActionLabel(){
-			return this.previewRequired ? "Save changes" : "Apply changes"
+			// Confirming a removal says "Confirm disable"; labelling it "Apply changes" tells the
+			// operator the opposite of what the next click does.
+			return this.primaryActionStep.label
 		},
 		primaryActionIcon(){
-			return this.previewRequired ? "bi bi-save" : "bi bi-shield-check"
+			return this.primaryActionStep.icon
 		},
 		previewStale(){
 			return this.previewRequired && Boolean(this.previewRuleset)
@@ -87,30 +104,40 @@ export default {
 			if (this.previewRuleset) return "Apply only after reviewing the generated rules."
 			return "Save changes to generate the exact nftables rules."
 		},
+		reviewDescriptionText(){
+			// Disabling still generates a real ruleset (flush + chains), so this panel renders for
+			// it too - it just must not promise that traffic "will be denied".
+			return describeReviewDescription(this.policy)
+		},
+		previewConfirmHint(){
+			return describePreviewConfirmationHint(this.policy)
+		},
 		policySignature(){
 			return this.projectSignature(this.policy)
 		},
 		hasUnappliedChanges(){
 			return this.policySignature !== this.persistedSignature
 		},
+		policyFlowState(){
+			// One snapshot handed to the three helpers below, so the badge wording, colour and
+			// icon can never disagree with each other again.
+			return {
+				loading: this.loading,
+				managed: this.policy.managed,
+				previewRequired: this.previewRequired,
+				previewRuleset: this.previewRuleset,
+				hasUnappliedChanges: this.hasUnappliedChanges,
+				hasPersistedPolicy: this.hasPersistedPolicy
+			}
+		},
 		changeState(){
-			if (this.loading) return "Loading policy state"
-			if (!this.previewRequired && this.previewRuleset) return "Preview ready - confirm to apply"
-			if (this.hasUnappliedChanges) return "Changes not applied"
-			if (!this.hasPersistedPolicy) return "Not configured"
-			return this.policy.managed ? "Applied" : "Disabled"
+			return describePolicyState(this.policyFlowState)
 		},
 		changeStateClass(){
-			if (!this.previewRequired && this.previewRuleset) return "policy-state-info"
-			if (this.hasUnappliedChanges) return "policy-state-warning"
-			if (this.hasPersistedPolicy && this.policy.managed) return "policy-state-success"
-			return "policy-state-neutral"
+			return describePolicyStateClass(this.policyFlowState)
 		},
 		policyStateIcon(){
-			if (!this.previewRequired && this.previewRuleset) return "bi bi-eye"
-			if (this.hasUnappliedChanges) return "bi bi-pencil-square"
-			if (this.hasPersistedPolicy && this.policy.managed) return "bi bi-shield-check"
-			return "bi bi-shield"
+			return describePolicyStateIcon(this.policyFlowState)
 		},
 		policyModeDescription(){
 			return this.policy.managed
@@ -455,7 +482,7 @@ export default {
 				<div>
 					<strong><LocaleText :t="changeState" /></strong>
 					<span v-if="hasUnappliedChanges" class="ms-1"><LocaleText t="Editing does not change forwarding access. Review the change, then confirm application." /></span>
-					<span v-else-if="!previewRequired && previewRuleset" class="ms-1"><LocaleText t="Review the generated rules below, then confirm application." /></span>
+					<span v-else-if="!previewRequired && previewRuleset" class="ms-1"><LocaleText :t="previewConfirmHint" /></span>
 				</div>
 			</div>
 
@@ -538,18 +565,18 @@ export default {
 			<div v-if="previewStale" class="policy-notice policy-notice-warning mb-3"><i class="bi bi-exclamation-triangle"></i><LocaleText t="The rules have changed since the last review. Save again to regenerate the preview." /></div>
 			<div v-if="previewRuleset" class="preview-panel mb-3" :class="{'preview-stale': previewStale}">
 				<div class="preview-heading">
-					<div><i class="bi bi-eye"></i><strong><LocaleText t="Generated nftables rules" /></strong></div>
+					<div><i :class="policy.managed ? 'bi bi-eye' : 'bi bi-shield-x'"></i><strong><LocaleText t="Generated nftables rules" /></strong></div>
 					<code>{{ previewHash }}</code>
 				</div>
-				<div class="preview-description"><LocaleText t="These are the exact rules that will be applied after confirmation." /></div>
+				<div class="preview-description"><LocaleText :t="reviewDescriptionText" /></div>
 				<div class="policy-checks small mb-2">
 					<div><i class="bi bi-check-circle-fill text-success me-2"></i><LocaleText t="nftables syntax check passed in an isolated temporary table. No live forwarding rule was changed." /></div>
 					<div><i class="bi bi-shield-check text-primary me-2"></i><LocaleText t="Scope is limited to forwarded traffic from this Peer. Gateway SSH and WireGuard listener traffic are not changed." /></div>
 					<div v-if="allPortsRuleCount" class="text-warning-emphasis"><i class="bi bi-exclamation-triangle-fill me-2"></i><LocaleText t="One or more rules allow all ports. Confirm that this broad access is intended." /></div>
-					<div><i class="bi bi-shield-x text-warning-emphasis me-2"></i><LocaleText t="All other forwarded traffic from this Peer will be denied after application." /></div>
-					<div><i class="bi bi-activity text-success me-2"></i><LocaleText t="ICMP diagnostics are allowed for every configured destination." /></div>
+					<div v-if="policy.managed"><i class="bi bi-shield-x text-warning-emphasis me-2"></i><LocaleText t="All other forwarded traffic from this Peer will be denied after application." /></div>
+					<div v-if="policy.managed"><i class="bi bi-activity text-success me-2"></i><LocaleText t="ICMP diagnostics are allowed for every configured destination." /></div>
 				</div>
-				<div class="policy-group-summary mb-2">
+				<div v-if="policy.groups.length" class="policy-group-summary mb-2">
 					<strong><LocaleText t="Port group summary" /></strong>
 					<div v-for="(group, groupIndex) in policy.groups" :key="group.uid" class="policy-group-summary-row">
 						<code>{{ group.destination }}</code><span class="badge text-bg-secondary">{{ group.protocol.toUpperCase() }}</span><span>{{ portGroupSummary(group) }}</span><span class="text-muted">{{ flattenedRuleCount(group) }} <LocaleText t="flattened rules" /></span>

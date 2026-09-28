@@ -9,7 +9,8 @@
     "build": "vite build --emptyOutDir",
     "buildcommitpush": "./build.sh",
     "build electron": "vite build --emptyOutDir && vite build --mode electron && cd ../../../../WGDashboard-Desktop && /opt/homebrew/bin/npm run \"electron dist\"",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test src/components/networkPolicy/policyFlow.test.js src/components/networkPolicy/portGroups.test.js"
   },
   "dependencies": {
     "@volar/language-server": "2.4.28",

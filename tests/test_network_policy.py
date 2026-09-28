@@ -191,6 +191,24 @@ class NetworkPolicyValidationTest(unittest.TestCase):
 
 
 class NetworkPolicyLocaleTest(unittest.TestCase):
+    POLICY_FLOW_SOURCE = "src/static/app/src/components/networkPolicy/policyFlow.js"
+
+    policy_flow_block = re.compile(r"export const POLICY_FLOW_LOCALE_KEYS = \[(.*?)\];", re.S)
+    policy_flow_entry = re.compile(r'"((?:[^"\\]|\\.)*)"')
+
+    def policy_flow_locale_keys(self, root):
+        # The save-flow helpers hand their labels to <LocaleText :t="...">, so scanning the modal for
+        # static t="..." attributes cannot see them - the check would pass while a runtime-only button
+        # label stayed untranslated. policyFlow.js declares the complete list instead.
+        source = (root / self.POLICY_FLOW_SOURCE).read_text(encoding="utf-8")
+        block = self.policy_flow_block.search(source)
+        if not block:
+            self.fail("POLICY_FLOW_LOCALE_KEYS is missing from %s" % self.POLICY_FLOW_SOURCE)
+        declared = self.policy_flow_entry.findall(block.group(1))
+        self.assertTrue(declared, "POLICY_FLOW_LOCALE_KEYS is empty")
+        self.assertEqual(len(declared), len(set(declared)), "duplicate keys in POLICY_FLOW_LOCALE_KEYS")
+        return set(declared)
+
     def test_chinese_translates_every_network_policy_ui_key(self):
         root = pathlib.Path(__file__).resolve().parents[1]
         source = (root / "src/static/app/src/components/networkPolicy/networkPolicyModal.vue").read_text(encoding="utf-8")
@@ -199,6 +217,7 @@ class NetworkPolicyLocaleTest(unittest.TestCase):
         keys = {match[1] for match in re.findall(r"<LocaleText\s+t=([\"'])(.*?)\1", source)}
         keys.update(match[1] for match in re.findall(r"GetLocale\(([\"'])(.*?)\1\)", source))
         keys.update(NETWORK_POLICY_LOCALE_DYNAMIC_KEYS)
+        keys.update(self.policy_flow_locale_keys(root))
 
         self.assertGreater(len(keys), len(NETWORK_POLICY_LOCALE_DYNAMIC_KEYS))
 
